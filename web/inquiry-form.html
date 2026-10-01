@@ -1,0 +1,71 @@
+<!doctype html>
+<!-- Bilingual (EN/AR) admissions inquiry form. Captures UTM / gclid / fbclid for attribution,
+     has a honeypot + timing trap for bots, and a submission_id so double clicks never create
+     two leads. Set ENDPOINT below, then embed the <form> + <script> in any page. -->
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admissions inquiry</title>
+<style>
+  body{font-family:"Segoe UI","Noto Sans Arabic",Tahoma,sans-serif;background:#F3F5F1;color:#12241F;margin:0;padding:24px}
+  form{max-width:460px;margin:0 auto;background:#fff;padding:24px;border-radius:12px;border:1px solid #DAE0DA}
+  label{display:block;font-size:14px;color:#5B6B65;margin:14px 0 4px}
+  input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #CBD3CC;border-radius:8px;font:inherit}
+  button{margin-top:18px;width:100%;padding:13px;border:0;border-radius:8px;background:#0B6E4F;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  .hp{position:absolute;left:-9999px} .lang{text-align:end;font-size:14px} .msg{margin-top:14px}
+  [dir=rtl] .lang{text-align:start}
+</style>
+</head>
+<body>
+<form id="leadops-form" novalidate>
+  <div class="lang"><a href="#" id="toggle">العربية</a></div>
+  <h2 data-en="Ask about admissions" data-ar="استفسار عن القبول"></h2>
+  <label for="f-name" data-en="Parent name" data-ar="اسم ولي الأمر"></label><input id="f-name" name="name" required autocomplete="name">
+  <label for="f-phone" data-en="Mobile / WhatsApp" data-ar="الجوال / واتساب"></label><input id="f-phone" name="phone" type="tel" autocomplete="tel" required>
+  <label for="f-email" data-en="Email" data-ar="البريد الإلكتروني"></label><input id="f-email" name="email" type="email" autocomplete="email">
+  <label for="f-grade" data-en="Grade applying for" data-ar="الصف المطلوب"></label>
+  <select id="f-grade" name="grade"><option>FS1</option><option>FS2</option><option>Year 1</option><option>Year 2</option><option>Year 3</option><option>Year 4-6</option><option>Year 7-9</option><option>Year 10-13</option></select>
+  <label for="f-msg" data-en="Message (optional)" data-ar="رسالة (اختياري)"></label><textarea id="f-msg" name="message" rows="3"></textarea>
+  <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+  <button type="submit" data-en="Send" data-ar="إرسال"></button>
+  <p class="msg" role="status"></p>
+</form>
+<script>
+(function () {
+  var ENDPOINT = 'https://n8n.yourschool.example/webhook/leadops/web-form';   // <- change me
+  var form = document.getElementById('leadops-form'), status = form.querySelector('.msg');
+  var started = Date.now(), lang = document.documentElement.lang === 'ar' ? 'ar' : 'en';
+  var sid = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+  // Remember campaign parameters for the whole visit (landing page -> form page)
+  var params = new URLSearchParams(location.search), keys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid'];
+  var attrib = {};
+  try { attrib = JSON.parse(sessionStorage.getItem('leadops_attrib') || '{}'); } catch (e) {}
+  keys.forEach(function (k) { if (params.get(k)) attrib[k] = params.get(k); });
+  try { sessionStorage.setItem('leadops_attrib', JSON.stringify(attrib)); } catch (e) {}
+  var text = { ok: { en: 'Thank you! Our admissions team will contact you shortly. Reference: ', ar: 'شكراً لكم! سيتواصل معكم فريق القبول قريباً. رقم المرجع: ' },
+               err: { en: 'Please check the highlighted fields and try again.', ar: 'يرجى التحقق من الحقول والمحاولة مرة أخرى.' } };
+  function paint() {
+    document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+    Array.prototype.forEach.call(document.querySelectorAll('[data-en]'), function (el) { el.textContent = el.getAttribute('data-' + lang); });
+    document.getElementById('toggle').textContent = lang === 'ar' ? 'English' : 'العربية';
+  }
+  document.getElementById('toggle').addEventListener('click', function (e) { e.preventDefault(); lang = lang === 'ar' ? 'en' : 'ar'; paint(); });
+  paint();
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var data = Object.fromEntries(new FormData(form).entries());
+    Object.assign(data, attrib, { language: lang, submission_id: sid, form_started_at: started,
+      page_url: location.href.split('?')[0], referrer: document.referrer, form_name: 'Website admissions form' });
+    form.querySelector('button').disabled = true;
+    fetch(ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) { status.textContent = text.ok[lang] + (res.reference || ''); form.reset(); }
+        else { status.textContent = text.err[lang]; form.querySelector('button').disabled = false; }
+      })
+      .catch(function () { status.textContent = text.err[lang]; form.querySelector('button').disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>
