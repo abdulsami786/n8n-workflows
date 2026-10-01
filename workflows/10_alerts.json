@@ -1,0 +1,376 @@
+{
+  "id": "lo10Alerts000000",
+  "name": "LeadOps 10 · Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Alerts\nTwo entry points: n8n's **Error Trigger** (any LeadOps workflow that fails) and a sub-workflow call (processing failures, dead letters, bad Meta signatures).\n\nThe same fingerprint within 15 minutes is logged but not re-sent, so one broken token does not produce 300 messages.\n\nEnv: ALERT_TELEGRAM_CHAT_ID, ALERT_EMAIL",
+        "height": 280,
+        "width": 380,
+        "color": 7
+      },
+      "id": "2979c31c-1a33-52c9-bb16-117ed3889f2b",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c9ab0d5e-d08d-5be7-8b94-5ede88a33319",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes n8n's Error Trigger payload into an alert.\nconst e = $json;\nconst wf = e.workflow || {};\nconst ex = e.execution || {};\nconst trig = e.trigger || null;\nconst err = ex.error || (trig && trig.error) || {};\nconst node = ex.lastNodeExecuted || (err.node && err.node.name) || 'trigger';\nconst message = String(err.message || err.description || 'Unknown error').slice(0, 800);\nreturn [{ json: {\n  severity: 'error',\n  title: `Workflow failed: ${wf.name || wf.id || 'unknown'}`,\n  detail: `Node: ${node}\\nError: ${message}` + (ex.url ? `\\nExecution: ${ex.url}` : '') + (ex.id ? `\\nExecution id: ${ex.id}` : ''),\n  fingerprint: `wf:${wf.id}:${node}:${message.replace(/\\d+/g, '#').slice(0, 120)}`,\n} }];\n"
+      },
+      "id": "1dc1bdf0-c497-566f-8d9a-976ba2027fac",
+      "name": "Describe error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "severity",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "detail",
+              "type": "string"
+            },
+            {
+              "name": "fingerprint",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "62f846a7-c9e7-5c86-bac4-d7603d67a638",
+      "name": "Alert request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.record_alert($1::text, $2::text, $3::text, $4::text, 15) AS alert;",
+        "options": {
+          "queryReplacement": "={{ [ $json.fingerprint || $json.title || 'alert', $json.severity || 'error', $json.title || 'Alert', $json.detail || '' ] }}"
+        }
+      },
+      "id": "48d40671-9e28-5fe0-9c77-e244498ccb87",
+      "name": "Throttle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e4ff42c7-49c1-5de9-bb1a-7cdecf8d63e6",
+              "leftValue": "={{ !$json.alert.suppressed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "d433506a-b15a-5ce8-a9da-50ebcb2c6308",
+      "name": "Not a repeat?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const esc = (s) => String(s === null || s === undefined ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nreturn $input.all().map((item) => {\n  const a = item.json.alert || {};\n  const icon = { critical: '🟥', error: '🟧', warning: '🟨', info: '🟦' }[a.severity] || '🟧';\n  return { json: {\n    ...a,\n    tg_text: `${icon} <b>${esc(a.title)}</b>\\n${esc(a.school_name)} · LeadOps\\n\\n<pre>${esc(String(a.detail || '').slice(0, 3000))}</pre>`,\n    email_subject: `[LeadOps ${a.severity}] ${a.title}`,\n    email_html: `<p><b>${esc(a.title)}</b></p><pre style=\"white-space:pre-wrap;font-family:monospace\">${esc(a.detail || '')}</pre>`,\n  } };\n});\n"
+      },
+      "id": "4ed1694a-6803-5c30-ac3a-910ddfdedd6a",
+      "name": "Compose alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3e26441-ccd7-5913-973c-4eb0433fbc7e",
+              "leftValue": "={{ !!$env.TELEGRAM_BOT_TOKEN && !!$env.ALERT_TELEGRAM_CHAT_ID }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "eb684088-5218-5ebd-b40b-dc9815cd93ce",
+      "name": "Telegram configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ ($env.TELEGRAM_API_BASE || 'https://api.telegram.org') + '/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "options": {
+          "timeout": 15000
+        },
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.ALERT_TELEGRAM_CHAT_ID, text: $json.tg_text, parse_mode: \"HTML\", reply_markup: $json.tg_markup || undefined, link_preview_options: { is_disabled: true } }) }}"
+      },
+      "id": "51df0dd5-bc0b-5233-8f57-03a5c1c91a2c",
+      "name": "Send Telegram alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c29d5248-8d64-5fae-94f5-59038b22e352",
+              "leftValue": "={{ ($env.SMTP_ENABLED || 'false') === 'true' && !!$env.ALERT_EMAIL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a03d7914-ca8a-55af-8dc1-a06ce896574e",
+      "name": "Email configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'leadops@example.com' }}",
+        "toEmail": "={{ $env.ALERT_EMAIL }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "07c9ced6-31ee-5eda-939c-eaa829799829",
+      "name": "Send email alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1440,
+        100
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "loCredSmtp000001",
+          "name": "LeadOps SMTP"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Describe error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe error": {
+      "main": [
+        [
+          {
+            "node": "Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert request": {
+      "main": [
+        [
+          {
+            "node": "Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle": {
+      "main": [
+        [
+          {
+            "node": "Not a repeat?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not a repeat?": {
+      "main": [
+        [
+          {
+            "node": "Compose alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram configured?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram configured?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email configured?": {
+      "main": [
+        [
+          {
+            "node": "Send email alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

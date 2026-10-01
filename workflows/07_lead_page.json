@@ -1,0 +1,164 @@
+{
+  "id": "lo07LeadActions0",
+  "name": "LeadOps 07 · Lead page (claim and contacted)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Lead page\nGET shows the family, one-tap Call / WhatsApp / Email and the claim button. POST (button tap) claims or marks as contacted, which is what the dashboard measures.\n\nOpening the link never claims: Outlook Safe Links and chat previews fetch links automatically, and bots are ignored.",
+        "height": 260,
+        "width": 380,
+        "color": 7
+      },
+      "id": "d2f0259b-6001-5c61-9599-ca8ec872c649",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "path": "leadops/lead",
+        "responseMode": "responseNode",
+        "options": {
+          "ignoreBots": true
+        },
+        "multipleMethods": true,
+        "httpMethod": [
+          "GET",
+          "POST"
+        ]
+      },
+      "id": "6cc7b14c-f707-5618-8c1c-a321823536aa",
+      "name": "Lead link",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "fa2f012f-7b83-5742-9376-4dec4d755b2c"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.lead_action($1::text, $2::text, $3::text) AS res;",
+        "options": {
+          "queryReplacement": "={{ [ $json.query.t || '', ($json.body && $json.body.a) || 'view', $json.query.u || '' ] }}"
+        }
+      },
+      "id": "926d4917-b069-5c99-8eda-6c0c002ea9c5",
+      "name": "Apply action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mobile page staff open from Telegram / email. Viewing never claims:\n// link scanners (Outlook Safe Links, chat previews) only do GETs, while\n// claiming is a POST from a real button tap.\nconst r = $json.res || {};\nconst esc = (s) => String(s === null || s === undefined ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\nconst css = `:root{--bg:#F3F5F1;--surface:#fff;--ink:#12241F;--muted:#5B6B65;--rule:#DAE0DA;--accent:#0B6E4F;--late:#C4363D;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}\n@media (prefers-color-scheme:dark){:root{--bg:#0D1613;--surface:#14201C;--ink:#E6EEEA;--muted:#9AAAA4;--rule:#26342F;--accent:#3FBF8F;--late:#FF6B70;color-scheme:dark}}\n*,*::before,*::after{box-sizing:inherit}body{margin:0;background:var(--bg);color:var(--ink);font-family:\"Readex Pro\",\"Segoe UI\",\"Noto Sans Arabic\",Tahoma,system-ui,sans-serif;font-weight:300;line-height:1.5}\n.wrap{max-width:560px;margin:0 auto;padding:22px 18px 40px}.school{color:var(--muted);font-size:14px}\nh1{font-weight:400;font-size:30px;line-height:1.2;margin:10px 0 6px}.meta{color:var(--muted);margin:0 0 18px}\n.status{border-left:3px solid var(--accent);padding:10px 14px;background:var(--surface);margin:0 0 18px;border-radius:0 8px 8px 0}\n.status.late{border-color:var(--late)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}\n.btn{display:block;text-align:center;text-decoration:none;padding:14px 12px;border-radius:10px;border:1px solid var(--rule);background:var(--surface);color:var(--ink);font:inherit;font-weight:500;width:100%;cursor:pointer}\n.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn.wide{grid-column:1/-1}\nform{margin:0 0 10px}dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:22px 0;font-size:15px}\ndt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}h2{font-size:16px;font-weight:500;margin:26px 0 8px}\nul{padding-left:18px;margin:0;color:var(--muted);font-size:14px}.foot{color:var(--muted);font-size:13px;margin-top:28px}\na:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}`;\nconst page = (title, body) => `<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\"><meta name=\"robots\" content=\"noindex\"><title>${esc(title)}</title><link href=\"https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500&display=swap\" rel=\"stylesheet\"><style>${css}</style></head><body><main class=\"wrap\">${body}</main></body></html>`;\n\nif (!r.found) {\n  return [{ json: { status_code: 404, html: page('Link not valid', `<h1>This link is not valid</h1><p class=\"meta\">It may be incomplete or copied without the end. Open the lead again from the original message.</p>`) } }];\n}\nconst inq = r.inquiry || {};\nconst L = inq.lead || {};\nconst tz = r.timezone || 'Asia/Dubai';\nconst me = r.agent;\nconst fmt = (iso) => iso ? new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)) : '';\nconst mins = (a, b) => Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000));\nconst dur = (m) => m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;\nconst channel = inq.channel === 'meta' ? (inq.platform === 'ig' ? 'Instagram lead form' : 'Facebook lead form') : ({ web: 'Website form', whatsapp: 'WhatsApp' }[inq.channel] || inq.channel);\nconst langName = { ar: 'Arabic', en: 'English', fr: 'French', ur: 'Urdu', hi: 'Hindi' }[inq.language] || inq.language || '';\n\nlet status;\nlet late = false;\nif (inq.contacted_at) {\n  status = `Contacted ${fmt(inq.contacted_at)}, ${dur(mins(inq.received_at, inq.contacted_at))} after the inquiry arrived.`;\n} else if (inq.claimed_at) {\n  const who = inq.claimed_by ? inq.claimed_by.name : 'Someone';\n  const mine = me && inq.claimed_by && inq.claimed_by.id === me.id;\n  status = (r.result === 'claimed' && mine ? 'You claimed this inquiry. Reminders have stopped.' : `${mine ? 'You' : esc(who)} claimed this ${fmt(inq.claimed_at)}.`)\n    + ` Response time ${dur(mins(inq.received_at, inq.claimed_at))}.`;\n} else {\n  const open = mins(inq.received_at, new Date().toISOString());\n  late = inq.sla_due_at && new Date(inq.sla_due_at) < new Date();\n  status = `Not claimed yet. Waiting ${dur(open)}${late ? ', past the promised response time' : ''}.`;\n}\n\nconst digits = String(L.phone_e164 || '').replace(/\\D/g, '');\nconst firstName = L.first_name || L.full_name || '';\nconst agentName = me ? me.name : 'the Admissions team';\nconst school = r.school_name || 'our school';\nconst greet = inq.language === 'ar'\n  ? `مرحباً ${firstName}، معك ${agentName} من قسم القبول في ${school}. شكراً لتواصلكم معنا، متى يناسبكم أن نتحدث؟`\n  : `Hello ${firstName}, this is ${agentName} from ${school} Admissions. Thank you for your inquiry. When would be a good time to talk?`;\n\nlet actions = '<div class=\"actions\">';\nif (digits) {\n  actions += `<a class=\"btn\" href=\"tel:+${digits}\">Call</a>`;\n  actions += `<a class=\"btn\" href=\"https://wa.me/${digits}?text=${encodeURIComponent(greet)}\">WhatsApp</a>`;\n}\nif (L.email) actions += `<a class=\"btn${digits ? ' wide' : ''}\" href=\"mailto:${esc(L.email)}\">Email</a>`;\nactions += '</div>';\nif (!inq.claimed_at) actions += `<form method=\"post\"><input type=\"hidden\" name=\"a\" value=\"claim\"><button class=\"btn primary\" type=\"submit\">Claim this inquiry</button></form>`;\nif (!inq.contacted_at) actions += `<form method=\"post\"><input type=\"hidden\" name=\"a\" value=\"contacted\"><button class=\"btn\" type=\"submit\">Mark as contacted</button></form>`;\n\nconst rows = [\n  ['Phone', L.phone_e164], ['Email', L.email], ['Language', langName], ['Channel', channel],\n  ['Campaign', inq.campaign_name], ['Ad set', inq.adset_name], ['Ad', inq.ad_name], ['Form', inq.form_name],\n  ...Object.entries(inq.answers || {}), ['Message', inq.message], ['Received', fmt(inq.received_at)],\n  ['Assigned to', inq.assigned_agent && inq.assigned_agent.name],\n].filter(([, v]) => v !== null && v !== undefined && v !== '');\nconst history = (inq.history || []).map((h) => `<li>${esc(fmt(h.received_at))}: ${esc(h.channel === 'meta' ? 'Meta form' : h.channel === 'web' ? 'Website' : h.channel)}${h.campaign_name ? ', ' + esc(h.campaign_name) : ''}</li>`).join('');\n\nconst body = `<div class=\"school\">${esc(school)} · Admissions</div>\n<h1 dir=\"auto\">${esc(L.full_name || 'Unknown name')}</h1>\n<p class=\"meta\">${esc(channel)}${inq.campaign_name ? ' · ' + esc(inq.campaign_name) : ''}${inq.is_test ? ' · test inquiry' : ''}</p>\n<div class=\"status${late ? ' late' : ''}\">${status}</div>\n${actions}\n<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd dir=\"auto\">${esc(v)}</dd>`).join('')}</dl>\n${history ? `<h2>Earlier inquiries from this family</h2><ul>${history}</ul>` : ''}\n<p class=\"foot\">Reference LO-${esc(inq.inquiry_id)}${me ? ' · signed in as ' + esc(me.name) : ''}</p>`;\nreturn [{ json: { status_code: 200, html: page(`${L.full_name || 'Lead'} · Admissions`, body) } }];\n"
+      },
+      "id": "8063260d-0868-5d72-9c68-304a1f0e1e3e",
+      "name": "Render page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.status_code }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "65e58324-d5e7-5311-baaa-9d99110ee9b5",
+      "name": "Send page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Lead link": {
+      "main": [
+        [
+          {
+            "node": "Apply action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apply action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply action": {
+      "main": [
+        [
+          {
+            "node": "Render page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render page": {
+      "main": [
+        [
+          {
+            "node": "Send page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

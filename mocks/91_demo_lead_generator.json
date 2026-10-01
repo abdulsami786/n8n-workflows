@@ -1,0 +1,329 @@
+{
+  "id": "lo91DemoLeads000",
+  "name": "LeadOps 91 · Demo lead generator (local testing)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Demo lead generator (local testing only)\nPosts a mixed batch through the **real** intake webhooks:\n- Meta leads in the real webhook format, signed with META_APP_SECRET (details come from the Graph API)\n- website leads in English and Arabic\n- the last one is a family inquiring again, which should be merged with no second alert\n\n**Easiest:** open http://localhost:5678/webhook/leadops/demo-leads?count=5 in the browser. After about 10 s it shows what happened to each lead, with links to every step. These runs appear in the **Executions** tab, not on this canvas.\n\n**From the editor:** pick \"Run it (button)\" in the Execute button's menu, then click a node to see its data.",
+        "width": 380,
+        "height": 340,
+        "color": 7
+      },
+      "id": "a0eb29c6-f8d6-4260-9d22-9c2c02eef53f",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "0f5391f0-b3fe-45bc-9a07-6021c8fecb47",
+      "name": "Run it (button)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "leadops/demo-leads",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "fd020f82-2363-48aa-922a-e8228f10a2e4",
+      "name": "GET /webhook/leadops/demo-leads",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "da455126-d195-4159-837d-78903cf9060a"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds count leads (default 5, max 50): Meta and website alternately, last one repeats a website family.\nconst q = $input.first().json.query || {};\nconst count = Math.min(Math.max(parseInt(q.count, 10) || 5, 2), 50);\nconst base = ($env.PUBLIC_BASE_URL || 'http://localhost:5678').replace(/\\/+$/, '');\nconst page = '100000000000001';\nconst rnd = (n) => Math.floor(Math.random() * n);\nconst pick = (a) => a[rnd(a.length)];\nconst out = [];\nlet lastWeb = null;\nfor (let i = 0; i < count; i++) {\n  const now = Math.floor(Date.now() / 1000);\n  if (i === count - 1 && lastWeb) {\n    const again = { ...lastWeb, message: 'Following up on my earlier message.', submission_id: 'demo-' + Date.now() + '-' + i };\n    out.push({ json: { kind: 'web, same family again', url: base + '/webhook/leadops/web-form', body: JSON.stringify(again), event_key: 'sid:' + again.submission_id } });\n  } else if (i % 2 === 0) {\n    // 17 digits, unquoted, like real Meta ids (larger than JavaScript's safe integers)\n    const leadgen = '9' + String(Date.now()).slice(-11) + String(i).padStart(2, '0') + String(rnd(1000)).padStart(3, '0');\n    const body = '{\"object\":\"page\",\"entry\":[{\"id\":\"' + page + '\",\"time\":' + now + ',\"changes\":[{\"field\":\"leadgen\",\"value\":'\n      + '{\"leadgen_id\":' + leadgen + ',\"page_id\":\"' + page + '\",\"form_id\":\"200000000000001\",\"ad_id\":\"300000000000003\",\"created_time\":' + now + '}}]}]}';\n    out.push({ json: { kind: 'meta', url: base + '/webhook/leadops/meta', body, event_key: leadgen } });\n  } else {\n    const ar = rnd(2) === 0;\n    lastWeb = {\n      name: ar ? pick(['نور حسن', 'سارة الكعبي', 'محمد الزعابي', 'هند السويدي']) : pick(['Anna Kowalski', 'Ravi Menon', 'Chloe Martin', 'Tom Baker']),\n      phone: '+97155' + String(rnd(1e7)).padStart(7, '0'),\n      email: 'family' + String(rnd(1e6)).padStart(6, '0') + '@example.com',\n      message: ar ? 'نرغب في معرفة الرسوم الدراسية والمقاعد المتاحة.' : 'We are relocating in January. Is there space in Year 1?',\n      grade: pick(['FS2', 'Year 1', 'Year 4', 'Year 9']),\n      utm_source: pick(['google', 'instagram', 'newsletter']), utm_medium: 'cpc',\n      utm_campaign: pick(['Brand search - admissions', 'Open day October', 'Fees and scholarships']),\n      page_url: 'https://school.example/admissions', submission_id: 'demo-' + Date.now() + '-' + i,\n    };\n    out.push({ json: { kind: 'web', url: base + '/webhook/leadops/web-form', body: JSON.stringify(lastWeb), event_key: 'sid:' + lastWeb.submission_id } });\n  }\n}\nreturn out;"
+      },
+      "id": "8c88df85-6c88-4867-ba1e-4799e0356909",
+      "name": "Make demo leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.body }}",
+        "dataPropertyName": "signature",
+        "secret": "={{ $env.META_APP_SECRET || 'not-configured' }}",
+        "encoding": "hex"
+      },
+      "id": "de11a61b-b88d-4f81-9f29-2798cd98d34c",
+      "name": "Sign like Meta",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        480,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Hub-Signature-256",
+              "value": "={{ 'sha256=' + $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "637e96f3-6544-484b-a801-f0e596912228",
+      "name": "Post to intake webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sent = $('Make demo leads').all();\nreturn [{ json: {\n  sent: $input.all().map((r, i) => ({ kind: sent[i].json.kind, http: r.json.statusCode, reply: r.json.body ?? r.json.data })),\n  keys: sent.map((s) => s.json.event_key),\n} }];"
+      },
+      "id": "29da27c0-9e6f-473e-84b6-cc6cd05557c1",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 6,
+        "unit": "seconds"
+      },
+      "id": "dbcf963b-abd5-473c-b4d4-a91010b4cc29",
+      "name": "Give it a few seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        100
+      ],
+      "webhookId": "d928c8ba-14dd-4b51-a1e0-5fe421507504"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.source, b.status AS inbox_status, left(b.last_error, 200) AS error,\n       i.id AS inquiry_id, i.status, i.duplicate_of, i.public_token, i.language, i.campaign_name,\n       l.full_name, l.phone_e164, l.crm_record_id, i.notified_at IS NOT NULL AS notified,\n       coalesce(a.name, oa.name) AS agent_name, coalesce(a.code, oa.code) AS agent_code\n  FROM leadops.inbox b\n  LEFT JOIN leadops.inquiries i ON i.id = b.inquiry_id\n  LEFT JOIN leadops.leads l ON l.id = i.lead_id\n  LEFT JOIN leadops.agents a ON a.id = i.assigned_agent_id\n  LEFT JOIN leadops.inquiries o ON o.id = i.duplicate_of\n  LEFT JOIN leadops.agents oa ON oa.id = o.assigned_agent_id\n WHERE b.event_key IN (SELECT jsonb_array_elements_text($1::jsonb))\n ORDER BY b.id;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.keys) ] }}"
+        }
+      },
+      "id": "1c749528-bff8-4a73-be3a-f7a935eea2ee",
+      "name": "Look up what happened",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        100
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Readable page: what happened to each lead, and where each step shows up in n8n.\nconst base = ($env.PUBLIC_BASE_URL || 'http://localhost:5678').replace(/\\/+$/, '');\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst rows = $input.all().map((r) => r.json).filter((r) => r.source);\nconst sent = $('Summary').first().json.sent.length;\nconst ex = (id, label, what) => '<li><a href=\"' + base + '/workflow/' + id + '/executions\" target=\"_blank\">' + label + '</a>: ' + what + '</li>';\nconst tr = rows.map((r, n) => {\n  const result = !r.inquiry_id ? '<span class=\"bad\">' + esc(r.inbox_status) + (r.error ? ': ' + esc(r.error) : '') + '</span>'\n    : r.status === 'merged' ? 'Merged into #' + r.duplicate_of + ' (same family)' : 'New inquiry #' + r.inquiry_id;\n  const tg = r.status === 'merged' ? 'no (merged, by design)' : r.notified ? 'sent' : '<span class=\"bad\">not yet</span>';\n  const page = r.public_token ? '<a href=\"' + base + '/webhook/leadops/lead?t=' + r.public_token + '&u=' + encodeURIComponent(r.agent_code || '') + '\" target=\"_blank\">Open</a>' : '';\n  return '<tr><td>' + (n + 1) + '</td><td>' + (r.source === 'meta' ? 'Meta lead ad' : 'Website form') + '</td>'\n    + '<td><bdi>' + esc(r.full_name) + '</bdi><div class=\"dim\" dir=\"ltr\">' + esc(r.phone_e164) + ' · ' + esc(String(r.language || '').toUpperCase()) + '</div></td>'\n    + '<td>' + esc(r.campaign_name) + '</td><td>' + result + '</td><td>' + (r.crm_record_id ? esc(r.crm_record_id) : '-') + '</td>'\n    + '<td>' + esc(r.agent_name || '-') + '</td><td>' + tg + '</td><td>' + page + '</td></tr>';\n}).join('');\nconst html = '<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Demo leads sent</title><style>'\n  + 'body{font:15px/1.5 system-ui,sans-serif;margin:24px auto;max-width:1100px;padding:0 16px;background:#fff;color:#1d1d1f}'\n  + '@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#eee}th{background:#262626!important}td,th{border-color:#333!important}a{color:#8ab4ff}}'\n  + 'table{border-collapse:collapse;width:100%;margin:12px 0 24px}th,td{border-bottom:1px solid #e5e5e5;padding:8px;text-align:left;vertical-align:top}'\n  + 'th{background:#f5f5f5;font-weight:600}.dim{opacity:.65;font-size:13px}.bad{color:#d33}li{margin:4px 0}.wrap{overflow-x:auto}'\n  + '</style></head><body>'\n  + '<h1>Sent ' + sent + ' demo leads</h1><p>They went through the real intake webhooks, just like leads from Meta and the website. Here is what happened to each one:</p>'\n  + '<div class=\"wrap\"><table><tr><th>#</th><th>Came from</th><th>Family</th><th>Campaign</th><th>Result</th><th>CRM contact</th><th>Assigned to</th><th>Telegram</th><th>Lead page</th></tr>'\n  + (tr || '<tr><td colspan=\"9\">Nothing found yet. Refresh the dashboard in a moment.</td></tr>') + '</table></div>'\n  + '<h2>Where each step shows up in n8n</h2><p class=\"dim\">Each link opens that workflow\\'s Executions list. Click the newest run, then click any node to see what went in and out.</p><ol>'\n  + ex('lo91DemoLeads000', '91 Demo lead generator', 'this run. \"Post to intake webhook\" shows every request and reply')\n  + ex('lo01MetaIntake00', '01 Meta intake', 'checked the signature and saved the Meta leads')\n  + ex('lo02WebIntake000', '02 Website form intake', 'checked and saved the website leads')\n  + ex('lo03Processor000', '03 Lead processor', 'cleaned the data, merged repeats, picked the agent')\n  + ex('lo04CrmSync00000', '04 CRM sync', 'created the contact and note in the CRM')\n  + ex('lo05Notify000000', '05 Notify agent', 'wrote the Telegram message')\n  + ex('lo90MockApis0000', '90 Mock providers', 'where the Telegram messages \"arrive\". Open \"Telegram sendMessage\" to read them')\n  + '</ol><p><a href=\"' + base + '/webhook/leadops/dashboard\" target=\"_blank\">Open the dashboard</a> (user admissions, password in .env) · <a href=\"?count=5\">Send 5 more</a></p>'\n  + '<p class=\"dim\">Leads nobody claims get a reminder after 5 minutes and go to the manager after 10. Claim one from its lead page to stop that.</p></body></html>';\nreturn [{ json: { html } }];"
+      },
+      "id": "e1f4e51d-708c-462e-9aff-f8e7969118ab",
+      "name": "Build results page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "id": "0fe97c09-fb20-4fb0-9b91-26eba184d5b5",
+      "name": "Show results page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Run it (button)": {
+      "main": [
+        [
+          {
+            "node": "Make demo leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /webhook/leadops/demo-leads": {
+      "main": [
+        [
+          {
+            "node": "Make demo leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make demo leads": {
+      "main": [
+        [
+          {
+            "node": "Sign like Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign like Meta": {
+      "main": [
+        [
+          {
+            "node": "Post to intake webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to intake webhook": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary": {
+      "main": [
+        [
+          {
+            "node": "Give it a few seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Give it a few seconds": {
+      "main": [
+        [
+          {
+            "node": "Look up what happened",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up what happened": {
+      "main": [
+        [
+          {
+            "node": "Build results page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build results page": {
+      "main": [
+        [
+          {
+            "node": "Show results page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all"
+  }
+}

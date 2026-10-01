@@ -1,0 +1,857 @@
+{
+  "id": "lo03Processor000",
+  "name": "LeadOps 03 · Lead processor",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Lead processor (sub-workflow)\nInput: `inbox_id`. Resumable and idempotent: every step checks what already happened, so a retry never creates a second CRM contact or a second alert.\n\n1. claim the inbox event (row lock)\n2. fetch the Meta lead (falls back to basic fields when campaign names need extra permissions)\n3. normalize phone / email / language\n4. dedupe + save (SQL, atomic)\n5. CRM sync\n6. route by time, language, owner\n7. notify\n8. mark done",
+        "height": 380,
+        "width": 400,
+        "color": 7
+      },
+      "id": "30d7ea5e-a8d5-57f6-a778-89aaa4d98cc0",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "inbox_id",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "05a90e90-53c4-560f-b1b2-62bd209f13f9",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6835346c-3b5c-5f8e-988c-e17f91d530c6",
+              "name": "default_country_code",
+              "value": "={{ $env.DEFAULT_COUNTRY_CODE || '971' }}",
+              "type": "string"
+            },
+            {
+              "id": "28b0bf14-1035-5d1c-99cb-8426b0c79775",
+              "name": "allow_test_leads",
+              "value": "={{ ($env.ALLOW_TEST_LEADS || 'true') === 'true' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "d2b8e3d6-759e-53cd-833e-837e4cdca98b",
+              "name": "graph_base",
+              "value": "={{ ($env.META_GRAPH_BASE || 'https://graph.facebook.com') + '/' + ($env.META_GRAPH_VERSION || 'v26.0') }}",
+              "type": "string"
+            },
+            {
+              "id": "9eb59039-7978-5812-a3f4-8507d04ac629",
+              "name": "crm_provider",
+              "value": "={{ ($env.CRM_PROVIDER || 'none').toLowerCase() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "87633b2b-79cb-5ea3-9866-19a4c7f7984b",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadops.inbox\n   SET status = 'processing', locked_at = now(), attempts = attempts + 1\n WHERE id = $1::bigint\n   AND (status IN ('pending', 'failed')\n        OR (status = 'processing' AND locked_at < now() - interval '10 minutes'))\nRETURNING id AS inbox_id, source, event_key, payload, attempts;",
+        "options": {
+          "queryReplacement": "={{ [ $json.inbox_id ] }}"
+        }
+      },
+      "id": "66160cca-16d0-5030-af8d-ea968829126b",
+      "name": "Claim event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "acf11564-79a9-59da-b8fc-ed73113a3c8b",
+              "leftValue": "={{ $json.source === 'meta' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "62d260b8-bdc0-5c17-943e-09ee89cf33c7",
+      "name": "From Meta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "95730b5a-ce30-5e4d-bb01-0a3fcb976430",
+              "leftValue": "={{ $('Config').first().json.allow_test_leads && !!$json.payload.test_lead }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "100871f8-f14a-50ce-8089-505785524be1",
+      "name": "Signed test lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.graph_base }}/{{ $json.payload.leadgen_id }}",
+        "options": {
+          "timeout": 15000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,created_time,field_data,form_id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,is_organic,platform"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ JSON.parse($env.META_PAGE_TOKENS || '{}')[$('Claim event').first().json.payload.page_id] || $env.META_PAGE_ACCESS_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "2bbba3ce-ebc1-5706-8ff4-9325990778a8",
+      "name": "Fetch lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -80
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.graph_base }}/{{ $('Claim event').first().json.payload.leadgen_id }}",
+        "options": {
+          "timeout": 15000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,created_time,field_data,form_id,ad_id,is_organic,platform"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ JSON.parse($env.META_PAGE_TOKENS || '{}')[$('Claim event').first().json.payload.page_id] || $env.META_PAGE_ACCESS_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "03b3b0aa-db44-552e-913b-6d3cf460cce9",
+      "name": "Fetch lead (basic fields)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.graph_base }}/{{ $json.form_id }}",
+        "options": {
+          "timeout": 15000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "name,locale"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ JSON.parse($env.META_PAGE_TOKENS || '{}')[$('Claim event').first().json.payload.page_id] || $env.META_PAGE_ACCESS_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "83b97312-0415-57e2-abc0-11bce5a3f7c8",
+      "name": "Fetch form",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        -80
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turns a Graph API lead (or a signed test lead) into the canonical inquiry shape.\nconst ev = $('Claim event').first().json;\nconst cfg = $('Config').first().json;\nconst payload = ev.payload || {};\nconst safe = (name) => {\n  try { const it = $(name).first(); return it && it.json && !it.json.error ? it.json : null; } catch (e) { return null; }\n};\nlet lead = null;\nif (cfg.allow_test_leads && payload.test_lead) lead = payload.test_lead;\nif (!lead) { const full = safe('Fetch lead'); if (full && Array.isArray(full.field_data)) lead = full; }\nif (!lead) { const basic = safe('Fetch lead (basic fields)'); if (basic && Array.isArray(basic.field_data)) lead = basic; }\nif (!lead) throw new Error('Could not load lead ' + payload.leadgen_id + ' from the Graph API');\nconst form = (payload.test_lead && payload.test_lead.form) || safe('Fetch form') || {};\n\nconst KNOWN = {\n  full_name: 'full_name', name: 'full_name', first_name: 'first_name', last_name: 'last_name',\n  email: 'email', work_email: 'email', phone_number: 'phone', phone: 'phone', mobile: 'phone',\n  mobile_number: 'phone', whatsapp_number: 'phone', preferred_language: 'language', language: 'language',\n};\nconst label = (k) => k.replace(/[_?]+/g, ' ').trim().replace(/^\\w/, (c) => c.toUpperCase());\nconst f = {};\nconst answers = {};\nfor (const item of lead.field_data || []) {\n  const key = String(item.name || '').trim();\n  const vals = Array.isArray(item.values) ? item.values : [item.values];\n  const val = vals.filter((v) => v !== null && v !== undefined && String(v).trim() !== '').join(', ');\n  const canon = KNOWN[key.toLowerCase()];\n  if (canon && !f[canon]) f[canon] = val;\n  else if (val) answers[label(key)] = val.slice(0, 500);\n}\nconst isoTime = (t) => {\n  if (t === null || t === undefined || t === '') return null;\n  const d = /^\\d+$/.test(String(t)) ? new Date(Number(t) * 1000)\n    : new Date(String(t).replace(/([+-]\\d{2})(\\d{2})$/, '$1:$2'));\n  return isNaN(d.getTime()) ? null : d.toISOString();\n};\nconst organic = lead.is_organic === true || lead.is_organic === 'true';\nreturn [{ json: {\n  inbox_id: ev.inbox_id,\n  channel: 'meta',\n  submitted_at: isoTime(lead.created_time) || isoTime(payload.created_time) || new Date().toISOString(),\n  full_name: f.full_name || null, first_name: f.first_name || null, last_name: f.last_name || null,\n  phone_raw: f.phone || null, email_raw: f.email || null, language_hint: f.language || null,\n  form_locale: form.locale || null,\n  source_detail: 'Meta lead form: ' + (form.name || lead.form_id || payload.form_id || 'unknown'),\n  campaign_id: lead.campaign_id || null,\n  campaign_name: lead.campaign_name || (organic ? 'Organic (lead form)' : null),\n  adset_name: lead.adset_name || null,\n  ad_name: lead.ad_name || null,\n  form_id: String(lead.form_id || payload.form_id || '') || null,\n  form_name: form.name || null,\n  platform: lead.platform || null,\n  is_organic: organic,\n  answers,\n  message: null,\n  is_test: !!payload.test_lead,\n} }];\n"
+      },
+      "id": "71d1a8c3-2c12-5536-98e6-219c9fda72f4",
+      "name": "Map Meta lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Maps any website form (custom HTML, WordPress plugins, Webflow...) to the canonical shape.\nconst ev = $('Claim event').first().json;\nconst p = ev.payload || {};\nconst src = p.fields || {};\nconst meta = p.meta || {};\nconst used = new Set(['submission_id', 'submissionId', '_sid', 'form_started_at', '_ts']);\nconst get = (...keys) => {\n  keys.forEach((k) => used.add(k));\n  for (const k of keys) { const v = src[k]; if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim(); }\n  return null;\n};\nconst full = get('name', 'full_name', 'fullname', 'parent_name', 'your-name');\nconst first = get('first_name', 'firstname', 'fname');\nconst last = get('last_name', 'lastname', 'lname', 'surname');\nconst phone = get('phone', 'mobile', 'phone_number', 'tel', 'telephone', 'whatsapp', 'your-phone', 'contact_number');\nconst email = get('email', 'email_address', 'your-email', 'mail');\nconst message = get('message', 'comments', 'comment', 'your-message', 'notes', 'enquiry', 'inquiry', 'question');\nconst lang = get('language', 'lang', 'preferred_language', 'locale');\nconst utm = {\n  source: get('utm_source'), medium: get('utm_medium'), campaign: get('utm_campaign'),\n  content: get('utm_content'), term: get('utm_term'),\n};\nconst gclid = get('gclid');\nconst fbclid = get('fbclid');\nconst pageUrl = get('page_url', 'page', 'url', 'source_url', 'landing_page') || meta.referer || null;\nconst referrer = get('referrer', 'referer');\nconst formName = get('form_name', 'form', 'form_id', 'formName');\nconst label = (k) => k.replace(/[_-]+/g, ' ').trim().replace(/^\\w/, (c) => c.toUpperCase());\nconst answers = {};\nfor (const [k, v] of Object.entries(src)) {\n  if (used.has(k) || v === null || v === undefined) continue;\n  const val = Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : String(v));\n  if (val.trim()) answers[label(k)] = val.trim().slice(0, 500);\n}\nconst campaign = utm.campaign\n  || (utm.source ? [utm.source, utm.medium].filter(Boolean).join(' / ')\n  : (gclid ? 'google / cpc (gclid)' : (fbclid ? 'facebook / referral (fbclid)' : 'Website (direct)')));\nreturn [{ json: {\n  inbox_id: ev.inbox_id,\n  channel: 'web',\n  submitted_at: meta.received_at || new Date().toISOString(),\n  full_name: full, first_name: first, last_name: last,\n  phone_raw: phone, email_raw: email, language_hint: lang, form_locale: null,\n  source_detail: 'Website form' + (formName ? ': ' + formName : '')\n    + (pageUrl ? ' (' + String(pageUrl).replace(/^https?:\\/\\//, '').slice(0, 80) + ')' : ''),\n  campaign_id: null, campaign_name: campaign, adset_name: null, ad_name: null,\n  form_id: formName, form_name: formName, platform: 'web',\n  is_organic: !utm.source && !gclid && !fbclid,\n  utm_source: utm.source, utm_medium: utm.medium, utm_campaign: utm.campaign,\n  utm_content: utm.content, utm_term: utm.term, gclid, fbclid, page_url: pageUrl, referrer,\n  answers, message, is_test: /^(test|leadops-test)/i.test(String(src.submission_id || '')),\n} }];\n"
+      },
+      "id": "4c524322-5318-527d-8446-b4ab6078dc15",
+      "name": "Map web form",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Phone -> E.164, email -> lowercase, names split, language detected.\n// Handles Arabic-Indic digits (٠-٩ / ۰-۹) and local formats like 050 123 4567.\nconst cfg = $('Config').first().json;\nconst cc = String(cfg.default_country_code || '971').replace(/\\D/g, '');\nconst c = $input.first().json;\nconst ascii = (s) => String(s === null || s === undefined ? '' : s)\n  .replace(/[\\u0660-\\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))\n  .replace(/[\\u06F0-\\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0));\nfunction phoneE164(raw) {\n  const s = ascii(raw).trim();\n  if (!s) return null;\n  const plus = s.startsWith('+');\n  let d = s.replace(/\\D/g, '');\n  if (!d) return null;\n  if (!plus) {\n    if (d.startsWith('00')) d = d.slice(2);                 // 00971...\n    else if (d.startsWith('0')) d = cc + d.slice(1);        // 050... -> 97150...\n    else if (d.length <= 9) d = cc + d;                     // 501234567 or 8-digit local numbers\n  }\n  if (d.startsWith(cc + '0')) d = cc + d.slice(cc.length + 1);   // +971 (0) 50...\n  return d.length >= 8 && d.length <= 15 ? '+' + d : null;\n}\nfunction cleanEmail(raw) {\n  const e = String(raw || '').trim().toLowerCase().replace(/^mailto:/, '');\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(e) ? e : null;\n}\nconst tidy = (s) => { const t = String(s || '').replace(/\\s+/g, ' ').trim(); return t || null; };\nlet first = tidy(c.first_name);\nlet last = tidy(c.last_name);\nlet full = tidy(c.full_name);\nif (!full && (first || last)) full = [first, last].filter(Boolean).join(' ');\nif (full && !first && !last) { const parts = full.split(' '); first = parts[0]; last = parts.slice(1).join(' ') || null; }\nconst langOf = (v) => {\n  const s = String(v || '').trim().toLowerCase();\n  if (!s) return null;\n  if (/^ar$|^ar[_-]|arab|عرب/.test(s)) return 'ar';\n  if (/^en$|^en[_-]|engl|انجل|إنجل/.test(s)) return 'en';\n  if (/^fr$|^fr[_-]|fren|fran/.test(s)) return 'fr';\n  if (/^ur$|^ur[_-]|urdu/.test(s)) return 'ur';\n  if (/^hi$|^hi[_-]|hindi/.test(s)) return 'hi';\n  return null;\n};\nconst arabicScript = /[\\u0600-\\u06FF]/.test([full, c.message, ...Object.values(c.answers || {})].join(' '));\nconst language = langOf(c.language_hint) || langOf(c.form_locale) || (arabicScript ? 'ar' : 'en');\nconst phone = phoneE164(c.phone_raw);\nconst email = cleanEmail(c.email_raw);\nif (!phone && !email) {\n  throw new Error(`Inquiry from inbox ${c.inbox_id} has no usable phone or email `\n    + `(phone=\"${c.phone_raw || ''}\", email=\"${c.email_raw || ''}\")`);\n}\nreturn [{ json: { ...c, full_name: full, first_name: first, last_name: last, phone_e164: phone, email, language } }];\n"
+      },
+      "id": "b14a1246-bb19-5573-853d-96fbde23fabe",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.upsert_inquiry($1::jsonb) AS inquiry;",
+        "options": {
+          "queryReplacement": "={{ [ $json ] }}"
+        }
+      },
+      "id": "b26ef511-7a61-5bb2-9759-3ec1ec7ee54e",
+      "name": "Save lead (dedupe)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2400,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1c0fa053-1874-5d56-9fe6-5a6088f5ac3b",
+              "leftValue": "={{ $('Config').first().json.crm_provider === 'bigin' && !$json.inquiry.crm_synced_at }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "f04a1941-d348-5076-9a64-833e0debc858",
+      "name": "Sync to CRM?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo04CrmSync00000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "inquiry_id": "={{ $json.inquiry.inquiry_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "inquiry_id",
+              "displayName": "inquiry_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "f8b77585-c513-579e-a516-88fdd10feaaf",
+      "name": "CRM sync",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2880,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH i AS (\n  UPDATE leadops.inquiries SET crm_synced_at = now(), crm_record_id = $2::text\n   WHERE id = $1::bigint RETURNING lead_id\n), l AS (\n  UPDATE leadops.leads SET crm_record_id = coalesce(crm_record_id, $2::text), updated_at = now()\n   WHERE id = (SELECT lead_id FROM i) RETURNING id\n)\nINSERT INTO leadops.events (inquiry_id, lead_id, type, detail)\nSELECT $1::bigint, (SELECT id FROM l), 'crm_synced', jsonb_build_object('record_id', $2::text, 'action', $3::text)\nRETURNING inquiry_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Save lead (dedupe)').first().json.inquiry.inquiry_id, $json.contact_id, $json.crm_action ] }}"
+        }
+      },
+      "id": "7bdecfc7-eeb2-55af-be56-039d93ca46d9",
+      "name": "Save CRM result",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3120,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.route_inquiry($1::bigint) AS inquiry;",
+        "options": {
+          "queryReplacement": "={{ [ $('Save lead (dedupe)').first().json.inquiry.inquiry_id ] }}"
+        }
+      },
+      "id": "a5ef7b9d-107f-5d74-babe-405c14e6c037",
+      "name": "Route and assign",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3360,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2f371301-eec3-5727-a5b3-0280227dc75f",
+              "leftValue": "={{ $json.inquiry.status === 'new' && !$json.inquiry.notified_at }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "d042fb64-1fb5-5c95-b122-04330f7d32f6",
+      "name": "Notify the team?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo05Notify000000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "inquiry_id": "={{ $json.inquiry.inquiry_id }}",
+            "kind": "new",
+            "agent_id": "={{ 0 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "inquiry_id",
+              "displayName": "inquiry_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "agent_id",
+              "displayName": "agent_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "37ffb5f5-d108-50db-8fd5-9f6a45b1cf18",
+      "name": "Notify assigned agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3840,
+        -120
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadops.inquiries\n   SET status = CASE WHEN status = 'new' THEN 'notified' ELSE status END,\n       notified_at = coalesce(notified_at, now())\n WHERE id = $1::bigint RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Route and assign').first().json.inquiry.inquiry_id ] }}"
+        }
+      },
+      "id": "abf16718-1015-573e-b166-94fce053fbb2",
+      "name": "Mark notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4080,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadops.inbox SET status = 'done', processed_at = now(), locked_at = NULL, last_error = NULL\n WHERE id = $1::bigint RETURNING id AS inbox_id, status, inquiry_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Claim event').first().json.inbox_id ] }}"
+        }
+      },
+      "id": "7919f3a1-0e1d-514f-9c5c-3866f73f7397",
+      "name": "Complete event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4320,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Claim event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim event": {
+      "main": [
+        [
+          {
+            "node": "From Meta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "From Meta?": {
+      "main": [
+        [
+          {
+            "node": "Signed test lead?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Map web form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signed test lead?": {
+      "main": [
+        [
+          {
+            "node": "Map Meta lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch lead": {
+      "main": [
+        [
+          {
+            "node": "Fetch form",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch lead (basic fields)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch lead (basic fields)": {
+      "main": [
+        [
+          {
+            "node": "Fetch form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch form": {
+      "main": [
+        [
+          {
+            "node": "Map Meta lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Meta lead": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map web form": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Save lead (dedupe)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save lead (dedupe)": {
+      "main": [
+        [
+          {
+            "node": "Sync to CRM?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync to CRM?": {
+      "main": [
+        [
+          {
+            "node": "CRM sync",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route and assign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM sync": {
+      "main": [
+        [
+          {
+            "node": "Save CRM result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save CRM result": {
+      "main": [
+        [
+          {
+            "node": "Route and assign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route and assign": {
+      "main": [
+        [
+          {
+            "node": "Notify the team?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify the team?": {
+      "main": [
+        [
+          {
+            "node": "Notify assigned agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Complete event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify assigned agent": {
+      "main": [
+        [
+          {
+            "node": "Mark notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark notified": {
+      "main": [
+        [
+          {
+            "node": "Complete event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

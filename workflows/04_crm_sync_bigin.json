@@ -1,0 +1,696 @@
+{
+  "id": "lo04CrmSync00000",
+  "name": "LeadOps 04 · CRM sync (Zoho Bigin)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## CRM sync: Zoho Bigin (sub-workflow)\nInput: `inquiry_id`. Access tokens are refreshed from the refresh token and cached in Postgres (Zoho limits refreshes per 10 minutes). Header format is `Zoho-oauthtoken`, not Bearer.\n\nKnown contact → note only. Otherwise search by email / mobile → create if missing → add an inquiry note with source, campaign, language and answers.\n\nEnv: ZOHO_ACCOUNTS_URL, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, BIGIN_API_BASE",
+        "height": 330,
+        "width": 400,
+        "color": 7
+      },
+      "id": "02d87fd7-33c6-5201-aa26-416d5e59a9b7",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "inquiry_id",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "c6012070-fe45-5e6a-8927-b0ab5af47a94",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "28a7fbae-88d8-55cc-a2f8-0bddd147779f",
+              "name": "accounts_url",
+              "value": "={{ ($env.ZOHO_ACCOUNTS_URL || 'https://accounts.zoho.com').replace(/\\/+$/, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "2aee7939-e8b9-5edc-87e2-dd7b5999517f",
+              "name": "bigin_base",
+              "value": "={{ ($env.BIGIN_API_BASE || 'https://www.zohoapis.com/bigin/v2').replace(/\\/+$/, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "11b6de34-fa22-506c-a6da-b0e9cde2b993",
+              "name": "field_channel",
+              "value": "={{ $env.BIGIN_FIELD_CHANNEL || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "6ebd92d6-5a71-566c-807e-20c6826e58a6",
+              "name": "field_campaign",
+              "value": "={{ $env.BIGIN_FIELD_CAMPAIGN || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f388d4c5-d426-56d2-9f59-8b370fd311d7",
+              "name": "field_language",
+              "value": "={{ $env.BIGIN_FIELD_LANGUAGE || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3f79dab8-f1d6-5712-8330-455300a4e043",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.inquiry_json($1::bigint) AS inq;",
+        "options": {
+          "queryReplacement": "={{ [ $('Start').first().json.inquiry_id ] }}"
+        }
+      },
+      "id": "00c9e13b-27df-555e-a82a-85b47437ab72",
+      "name": "Load inquiry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Bigin contact, the search criteria and the inquiry note.\nconst cfg = $('Config').first().json;\nconst inq = $('Load inquiry').first().json.inq;\nif (!inq) throw new Error('Inquiry not found for CRM sync');\nconst L = inq.lead || {};\nconst channel = { meta: 'Facebook/Instagram lead form', web: 'Website form', whatsapp: 'WhatsApp' }[inq.channel] || inq.channel;\nconst langName = { ar: 'Arabic', en: 'English', fr: 'French', ur: 'Urdu', hi: 'Hindi' }[inq.language] || inq.language || '';\nconst first = String(L.first_name || '').trim();\nconst last = String(L.last_name || '').trim();\nconst contact = {\n  First_Name: last ? (first || undefined) : undefined,\n  Last_Name: (last || first || L.full_name || 'Unknown').slice(0, 80),   // Bigin requires Last_Name\n  Email: L.email || undefined,\n  Mobile: L.phone_e164 || undefined,\n  Description: [\n    `First inquiry: ${channel}${inq.campaign_name ? ' - ' + inq.campaign_name : ''}`,\n    langName ? `Language: ${langName}` : null,\n    `LeadOps family #${L.lead_id}`,\n  ].filter(Boolean).join('\\n'),\n};\nif (cfg.field_channel) contact[cfg.field_channel] = channel;\nif (cfg.field_campaign && inq.campaign_name) contact[cfg.field_campaign] = String(inq.campaign_name).slice(0, 250);\nif (cfg.field_language && langName) contact[cfg.field_language] = langName;\nObject.keys(contact).forEach((k) => contact[k] === undefined && delete contact[k]);\n\n// Zoho criteria syntax: escape ( ) , and backslash inside values\nconst esc = (v) => String(v).replace(/([(),\\\\])/g, '\\\\$1');\nconst parts = [];\nif (L.email) parts.push(`(Email:equals:${esc(L.email)})`);\nif (L.phone_e164) parts.push(`(Mobile:equals:${esc(L.phone_e164)})`);\nconst criteria = parts.length > 1 ? `(${parts.join('or')})` : parts[0];\n\nconst noteLines = [\n  `Channel: ${channel}`,\n  inq.campaign_name ? `Campaign: ${inq.campaign_name}` : null,\n  inq.adset_name ? `Ad set: ${inq.adset_name}` : null,\n  inq.ad_name ? `Ad: ${inq.ad_name}` : null,\n  inq.form_name ? `Form: ${inq.form_name}` : null,\n  inq.utm_source ? `UTM: ${[inq.utm_source, inq.utm_medium, inq.utm_campaign].filter(Boolean).join(' / ')}` : null,\n  inq.page_url ? `Page: ${inq.page_url}` : null,\n  langName ? `Language: ${langName}` : null,\n  `Received: ${inq.received_at}`,\n  ...Object.entries(inq.answers || {}).map(([k, v]) => `${k}: ${v}`),\n  inq.message ? `Message: ${inq.message}` : null,\n  inq.status === 'merged' ? 'Same family submitted again within the dedupe window (merged, no new alert).' : null,\n  `LeadOps inquiry #${inq.inquiry_id}`,\n].filter(Boolean);\nreturn [{ json: {\n  known_id: inq.crm_record_id || L.crm_record_id || null,\n  contact,\n  criteria,\n  note: {\n    Note_Title: `${inq.status === 'merged' || inq.is_repeat ? 'Repeat' : 'New'} inquiry via ${channel}${inq.campaign_name ? ' - ' + inq.campaign_name : ''}`.slice(0, 120),\n    Note_Content: noteLines.join('\\n'),\n  },\n} }];\n"
+      },
+      "id": "f105284c-aa8b-57cd-a99c-36e07d1f8f5a",
+      "name": "Build Bigin payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT access_token FROM leadops.oauth_tokens\n WHERE provider = 'zoho' AND expires_at > now() + interval '2 minutes';",
+        "options": {}
+      },
+      "id": "4c85f94c-0056-54e9-9491-0b571f75c02b",
+      "name": "Cached Zoho token",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "36d5230f-846d-5be5-94c3-b8e4983d88d9",
+              "leftValue": "={{ !!$json.access_token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "3c4f3ace-03c8-504a-9afa-4ea14bcbed17",
+      "name": "Token cached?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.accounts_url }}/oauth/v2/token",
+        "options": {
+          "timeout": 15000
+        },
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "refresh_token",
+              "value": "={{ $env.ZOHO_REFRESH_TOKEN }}"
+            },
+            {
+              "name": "client_id",
+              "value": "={{ $env.ZOHO_CLIENT_ID }}"
+            },
+            {
+              "name": "client_secret",
+              "value": "={{ $env.ZOHO_CLIENT_SECRET }}"
+            },
+            {
+              "name": "grant_type",
+              "value": "refresh_token"
+            }
+          ]
+        }
+      },
+      "id": "7b89fbd4-1534-5a28-bcd1-35a027636bde",
+      "name": "Refresh Zoho token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        140
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT access_token FROM leadops.cache_token('zoho', $1, $2, $3);",
+        "options": {
+          "queryReplacement": "={{ [ $json.access_token ?? null, $json.expires_in ?? 3600, $json.error ?? null ] }}"
+        }
+      },
+      "id": "af7da88d-e203-55cd-b840-d9506a32e670",
+      "name": "Store token",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1680,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d7e13542-5399-5819-a596-44bb7e7eee3c",
+              "name": "access_token",
+              "value": "={{ $json.access_token }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "488b46cf-5c41-5add-9dad-f9770590348c",
+      "name": "Use token",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "eb5111cc-2207-5baf-8b12-c62a19d73f83",
+              "leftValue": "={{ !!$('Build Bigin payload').first().json.known_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "32a17193-69c6-5c8e-9955-dc1db9bb5e9e",
+      "name": "Known contact?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.bigin_base }}/Contacts/search",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "criteria",
+              "value": "={{ $('Build Bigin payload').first().json.criteria }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Zoho-oauthtoken {{ $('Use token').first().json.access_token }}"
+            }
+          ]
+        }
+      },
+      "id": "f556551c-4ba0-5c23-90f5-6cdedf2140be",
+      "name": "Search contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cb96c9bb-c6e4-562c-9e12-60e1a98589c6",
+              "leftValue": "={{ $json.statusCode === 200 && ($json.body?.data?.length || 0) > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "02ab0677-d393-5f80-b9a5-da3b9abd31df",
+      "name": "Found in Bigin?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.bigin_base }}/Contacts",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": true
+            }
+          }
+        },
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Zoho-oauthtoken {{ $('Use token').first().json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: [ $('Build Bigin payload').first().json.contact ], trigger: ['workflow'] }) }}"
+      },
+      "id": "ed0dc3c9-d2e2-5e25-a0c4-7d4997d505ae",
+      "name": "Create contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resolves the Bigin contact id from whichever path ran: known id, search hit or create.\nconst safe = (n) => { try { const it = $(n).first(); return it ? it.json : null; } catch (e) { return null; } };\nconst built = $('Build Bigin payload').first().json;\nif (built.known_id) return [{ json: { contact_id: String(built.known_id), crm_action: 'known' } }];\nconst s = safe('Search contact');\nconst hit = s && Number(s.statusCode) === 200 && s.body && Array.isArray(s.body.data) ? s.body.data[0] : null;\nif (hit && hit.id) return [{ json: { contact_id: String(hit.id), crm_action: 'matched' } }];\nconst c = safe('Create contact');\nconst row = c && Array.isArray(c.data) ? c.data[0] : null;\nif (row && row.code === 'SUCCESS' && row.details && row.details.id) {\n  return [{ json: { contact_id: String(row.details.id), crm_action: 'created' } }];\n}\nif (row && row.code === 'DUPLICATE_DATA' && row.details) {\n  const id = (row.details.duplicate_record && row.details.duplicate_record.id) || row.details.id;\n  if (id) return [{ json: { contact_id: String(id), crm_action: 'matched' } }];\n}\nthrow new Error('Bigin did not return a contact id: ' + JSON.stringify(c || s || {}).slice(0, 600));\n"
+      },
+      "id": "b1405b94-bb7c-5cc6-a48a-ecef1ed1238f",
+      "name": "Pick contact id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.bigin_base }}/Contacts/{{ $json.contact_id }}/Notes",
+        "options": {
+          "timeout": 15000
+        },
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Zoho-oauthtoken {{ $('Use token').first().json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: [ $('Build Bigin payload').first().json.note ] }) }}"
+      },
+      "id": "710e7743-db89-508c-ae8d-090dadea67b6",
+      "name": "Add inquiry note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7556cd11-2eea-59ea-859a-7ea19769df8e",
+              "name": "contact_id",
+              "value": "={{ $('Pick contact id').first().json.contact_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a57b6936-f3b4-532b-83ed-6f80b0d18fc5",
+              "name": "crm_action",
+              "value": "={{ $('Pick contact id').first().json.crm_action }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "b53d1f94-0c1a-5f35-80fb-bd4dec79310c",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3600,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Load inquiry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load inquiry": {
+      "main": [
+        [
+          {
+            "node": "Build Bigin payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bigin payload": {
+      "main": [
+        [
+          {
+            "node": "Cached Zoho token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cached Zoho token": {
+      "main": [
+        [
+          {
+            "node": "Token cached?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token cached?": {
+      "main": [
+        [
+          {
+            "node": "Use token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refresh Zoho token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Zoho token": {
+      "main": [
+        [
+          {
+            "node": "Store token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store token": {
+      "main": [
+        [
+          {
+            "node": "Use token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use token": {
+      "main": [
+        [
+          {
+            "node": "Known contact?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Known contact?": {
+      "main": [
+        [
+          {
+            "node": "Pick contact id",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search contact": {
+      "main": [
+        [
+          {
+            "node": "Found in Bigin?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found in Bigin?": {
+      "main": [
+        [
+          {
+            "node": "Pick contact id",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create contact": {
+      "main": [
+        [
+          {
+            "node": "Pick contact id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick contact id": {
+      "main": [
+        [
+          {
+            "node": "Add inquiry note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add inquiry note": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

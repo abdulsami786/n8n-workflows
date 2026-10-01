@@ -1,0 +1,556 @@
+{
+  "id": "lo02WebIntake000",
+  "name": "LeadOps 02 · Website form intake",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Website form intake\nAccepts JSON or form posts from any website form (custom HTML, WordPress plugins, Webflow...).\n\nSpam traps (honeypot + too-fast submit), validation, idempotency (submission_id or content fingerprint), durable inbox, instant answer to the browser with a reference number, then processing.\n\nEnv: WEB_FORM_KEY (optional)",
+        "height": 300,
+        "width": 380,
+        "color": 7
+      },
+      "id": "61596037-5edb-5449-99b0-80be3689d6c4",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "path": "leadops/web-form",
+        "responseMode": "responseNode",
+        "options": {},
+        "httpMethod": "POST"
+      },
+      "id": "2ff2e7ed-3ac7-5022-80a7-69ff8f5a3145",
+      "name": "Website form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "fb7030ef-d2fc-5fc4-a014-7fc5fce2d1dc"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "11a48890-e885-5eaa-a7a7-4f41e2546b46",
+              "name": "form_key",
+              "value": "={{ $env.WEB_FORM_KEY || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "72212c99-0374-5584-ae3f-7f08c44aad37",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates a website submission. Returns one item with decision = accept | reject | spam.\nconst req = $('Website form').first().json;\nconst cfg = $('Config').first().json;\nconst headers = req.headers || {};\nlet body = req.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }\nif (!body || typeof body !== 'object' || Array.isArray(body)) body = {};\n// Some form builders nest fields as { fields: {...} } or { data: {...} }\nconst src = (body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields)) ? body.fields\n  : (body.data && typeof body.data === 'object' && !Array.isArray(body.data)) ? body.data : body;\nconst get = (...keys) => {\n  for (const k of keys) { const v = src[k]; if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim(); }\n  return '';\n};\n\n// 1) Optional shared key (for server-to-server posts from a CMS / form plugin)\nif (cfg.form_key && get('key', '_key') !== cfg.form_key && String(headers['x-leadops-key'] || '') !== cfg.form_key) {\n  return [{ json: { decision: 'reject', status: 401, errors: ['invalid form key'] } }];\n}\n// 2) Spam traps: hidden honeypot field + \"submitted faster than a human could type\"\nconst honeypot = get('website', 'company_website', 'hp', '_hp');\nconst started = Number(get('form_started_at', '_ts'));\nconst tooFast = started > 1e12 && Date.now() - started < 2500;\nif (honeypot || tooFast) return [{ json: { decision: 'spam', status: 200, errors: [] } }];\n\n// 3) Minimal validation (the processor does full normalization)\nconst name = get('name', 'full_name', 'fullname', 'parent_name', 'your-name', 'first_name', 'firstname');\nconst phone = get('phone', 'mobile', 'phone_number', 'tel', 'telephone', 'whatsapp', 'your-phone', 'contact_number');\nconst email = get('email', 'email_address', 'your-email', 'mail');\nconst errors = [];\nif (!name) errors.push('name is required');\nif (!phone && !email) errors.push('phone or email is required');\nif (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) errors.push('email looks invalid');\nif (phone && phone.replace(/[^\\d\\u0660-\\u0669\\u06F0-\\u06F9]/g, '').length < 7) errors.push('phone looks too short');\nif (errors.length) return [{ json: { decision: 'reject', status: 422, errors } }];\n\n// 4) Idempotency key: client submission id, else a content fingerprint per 10-minute bucket\nconst sid = get('submission_id', 'submissionId', '_sid');\nconst bucket = Math.floor(Date.now() / 600000);\nconst eventKey = sid\n  ? 'sid:' + sid.slice(0, 120)\n  : 'fp:' + [email.toLowerCase(), phone.replace(/\\D/g, ''), get('message', 'comments', 'your-message').slice(0, 120), bucket].join('|');\nconst fields = {};\nfor (const [k, v] of Object.entries(src)) {\n  if (!['website', 'company_website', 'hp', '_hp', 'key', '_key'].includes(k)) fields[k] = v;\n}\nreturn [{ json: {\n  decision: 'accept', status: 200, errors: [], event_key: eventKey,\n  payload: { fields, meta: {\n    received_at: new Date().toISOString(),\n    ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim() || null,\n    user_agent: headers['user-agent'] || null,\n    origin: headers.origin || null,\n    referer: headers.referer || null,\n  } },\n} }];\n"
+      },
+      "id": "ad822f0a-9c80-5cef-8fe4-fc30bee96139",
+      "name": "Validate submission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6fa2037a-07b2-5227-bdf9-3a153bd198e2",
+              "leftValue": "={{ $json.decision === 'accept' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "f6fa549f-80b5-5a40-bb06-e604e3b679c4",
+      "name": "Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.decision === 'spam' ? { ok: true } : { ok: false, errors: $json.errors }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "id": "5408bda9-1fda-59f2-9b2f-cd0f82227c26",
+      "name": "Answer: rejected or spam",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO leadops.inbox (source, event_key, payload) VALUES ('web', $1, $2::jsonb)\n  ON CONFLICT (source, event_key) DO NOTHING\n  RETURNING id\n)\nSELECT coalesce((SELECT id FROM ins),\n                (SELECT id FROM leadops.inbox WHERE source = 'web' AND event_key = $1)) AS inbox_id,\n       EXISTS (SELECT 1 FROM ins) AS is_new;",
+        "options": {
+          "queryReplacement": "={{ [ $json.event_key, $json.payload ] }}"
+        }
+      },
+      "id": "4209d49a-e61e-5da1-acf4-236243b98a0d",
+      "name": "Save to inbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        -20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, reference: 'LO-' + $json.inbox_id, duplicate: !$json.is_new, message: 'Thank you. Our admissions team will contact you shortly.' }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8c70bc0e-cb0e-53e9-89eb-21d58587f650",
+      "name": "Answer: thank you",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "297058f4-5c47-524d-8d62-22b90b6897ed",
+              "leftValue": "={{ $json.is_new }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "1f001223-c38b-5c03-b194-c03ecf23b601",
+      "name": "New submission?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "80ad2a6f-d3ca-5e35-87f1-3a2ded3ba4c6",
+              "name": "inbox_id",
+              "value": "={{ $json.inbox_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "0f133160-4bf5-51e1-b699-4ef671408c57",
+      "name": "Current event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1680,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo03Processor000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "inbox_id": "={{ $json.inbox_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "inbox_id",
+              "displayName": "inbox_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "a6fe29f8-034c-580a-ab24-fdd76afa0c70",
+      "name": "Process lead",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        -40
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.mark_inbox_failed($1::bigint, $2::text, $3::int) AS r;",
+        "options": {
+          "queryReplacement": "={{ [ $('Current event').first().json.inbox_id, typeof $json.error === 'string' ? $json.error : ($json.error?.message || $json.message || JSON.stringify($json.error || 'Processing failed')), Number($env.MAX_ATTEMPTS || 6) ] }}"
+        }
+      },
+      "id": "77c6732e-e900-5a0c-976c-507c364509d4",
+      "name": "Schedule retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2160,
+        120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "eff17552-5673-5413-b6d8-bafc19af3ce2",
+              "leftValue": "={{ !!$json.r && ($json.r.status === 'dead' || $json.r.attempts <= 1) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "72609229-8ec3-5caf-8f13-222b730f8eeb",
+      "name": "Alert needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo10Alerts000000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "severity": "={{ $json.r.status === 'dead' ? 'critical' : 'warning' }}",
+            "title": "={{ $json.r.status === 'dead' ? 'Lead event gave up after ' + $json.r.attempts + ' attempts (needs manual replay)' : 'Lead event failed, retrying automatically' }}",
+            "detail": "={{ 'Inbox #' + $json.r.inbox_id + ' (' + $json.r.source + ', ' + $json.r.event_key + ')\\nError: ' + $json.r.last_error + '\\nNext retry: ' + ($json.r.status === 'dead' ? 'none, replay manually' : $json.r.next_retry_at) }}",
+            "fingerprint": "={{ 'inbox:' + $json.r.inbox_id + ':' + $json.r.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "fingerprint",
+              "displayName": "fingerprint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "8eb4e033-f4cb-55a6-9d9e-6cbeae2cb1bb",
+      "name": "Alert the operator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        40
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Website form": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Validate submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate submission": {
+      "main": [
+        [
+          {
+            "node": "Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Save to inbox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Answer: rejected or spam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to inbox": {
+      "main": [
+        [
+          {
+            "node": "Answer: thank you",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer: thank you": {
+      "main": [
+        [
+          {
+            "node": "New submission?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New submission?": {
+      "main": [
+        [
+          {
+            "node": "Current event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current event": {
+      "main": [
+        [
+          {
+            "node": "Process lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Schedule retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule retry": {
+      "main": [
+        [
+          {
+            "node": "Alert needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert needed?": {
+      "main": [
+        [
+          {
+            "node": "Alert the operator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

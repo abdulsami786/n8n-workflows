@@ -1,0 +1,317 @@
+{
+  "id": "lo11DailyDigest0",
+  "name": "LeadOps 11 · Morning digest",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Morning digest\nEvery day at 07:30 (GENERIC_TIMEZONE): yesterday's inquiries by channel, median first response, promise kept %, top campaign and anything still waiting, sent to agents with role = manager.",
+        "height": 220,
+        "width": 380,
+        "color": 7
+      },
+      "id": "a4789ff1-4f5e-53ca-b6f0-88d6a7d6a85d",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "d25b19f4-eeeb-52a1-9ebb-0b2740f9ff37",
+      "name": "Every morning",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8c56a700-fde3-57ea-a5c1-fb1586225f25",
+              "name": "public_base_url",
+              "value": "={{ ($env.PUBLIC_BASE_URL || 'http://localhost:5678').replace(/\\/+$/, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "c8881b98-905c-5ef1-b7e8-3799bc08cf16",
+              "name": "telegram_enabled",
+              "value": "={{ !!$env.TELEGRAM_BOT_TOKEN }}",
+              "type": "boolean"
+            },
+            {
+              "id": "31399cdc-d1b3-54c7-9272-d3ce17f0fa9c",
+              "name": "email_enabled",
+              "value": "={{ ($env.SMTP_ENABLED || 'false') === 'true' }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "304c9d3e-a284-5442-90a1-ed906af5db5a",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.digest_data() AS d,\n       (SELECT coalesce(jsonb_agg(to_jsonb(a) - 'created_at'), '[]'::jsonb)\n          FROM leadops.agents a WHERE a.active AND a.role = 'manager') AS managers;",
+        "options": {}
+      },
+      "id": "63577919-3d75-5209-8abd-86b5eccb6001",
+      "name": "Yesterday's numbers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Morning digest for managers (one item per manager).\nconst cfg = $('Config').first().json;\nconst d = $json.d || {};\nconst managers = $json.managers || [];\nconst esc = (s) => String(s === null || s === undefined ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst ch = d.by_channel || {};\nconst day = d.date ? new Date(d.date + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : 'Yesterday';\nconst minTxt = (m) => (m === null || m === undefined) ? 'n/a' : (m < 60 ? `${Math.round(m)} min` : `${(m / 60).toFixed(1)} h`);\nconst lines = [\n  `📊 <b>Admissions inquiries · ${esc(day)}</b>`,\n  `${esc(d.school_name)}`,\n  '',\n  `${d.inquiries || 0} inquiries · ${d.new_leads || 0} new families${d.merged ? ` · ${d.merged} duplicate merged` : ''}`,\n  `Facebook & Instagram ${ch.meta || 0} · Website ${ch.web || 0}${ch.whatsapp ? ` · WhatsApp ${ch.whatsapp}` : ''}`,\n  `Median first response ${minTxt(d.median_claim_min)} · ${d.sla_pct === null || d.sla_pct === undefined ? 'n/a' : Math.round(d.sla_pct) + '%'} on time`,\n  d.top_campaign ? `Top campaign: ${esc(d.top_campaign)}` : null,\n  d.open_now ? `⚠️ Waiting right now: ${d.open_now} (oldest ${minTxt(d.oldest_open_min)})` : 'Nobody is waiting right now.',\n  '',\n  `<a href=\"${cfg.public_base_url}/webhook/leadops/dashboard\">Open the dashboard</a>`,\n].filter((l) => l !== null);\nconst text = lines.join('\\n');\nreturn managers.map((m) => ({ json: {\n  recipient_name: m.name, telegram_chat_id: m.telegram_chat_id || null, email: m.email || null,\n  tg_text: text,\n  email_subject: `Admissions inquiries · ${day}: ${d.inquiries || 0} inquiries, median response ${minTxt(d.median_claim_min)}`,\n  email_html: `<div style=\"font-family:Segoe UI,Arial,sans-serif;line-height:1.6\">${text.replace(/\\n/g, '<br>')}</div>`,\n} }));\n"
+      },
+      "id": "a7363b1c-b61b-5677-b8a3-f1d856dd2b22",
+      "name": "Compose digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "43de2f02-556d-58d0-b10e-289eed26e6bc",
+              "leftValue": "={{ $('Config').first().json.telegram_enabled && !!$json.telegram_chat_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "2d44e454-0136-53cb-84eb-6e15a75585a2",
+      "name": "Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ ($env.TELEGRAM_API_BASE || 'https://api.telegram.org') + '/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "options": {
+          "timeout": 15000
+        },
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.telegram_chat_id, text: $json.tg_text, parse_mode: \"HTML\", reply_markup: $json.tg_markup || undefined, link_preview_options: { is_disabled: true } }) }}"
+      },
+      "id": "63b5a67d-537b-57d8-b10f-af55e899db33",
+      "name": "Send Telegram digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "691d0144-cf06-5b3d-a758-243fdb7a311a",
+              "leftValue": "={{ $('Config').first().json.email_enabled && !!$json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "99c8a534-0ace-58db-9be5-25de14764292",
+      "name": "Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'leadops@example.com' }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "76083335-a108-54e6-bd31-e0dd5dbdaf17",
+      "name": "Send email digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1200,
+        100
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "loCredSmtp000001",
+          "name": "LeadOps SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every morning": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Yesterday's numbers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Yesterday's numbers": {
+      "main": [
+        [
+          {
+            "node": "Compose digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose digest": {
+      "main": [
+        [
+          {
+            "node": "Telegram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email?": {
+      "main": [
+        [
+          {
+            "node": "Send email digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

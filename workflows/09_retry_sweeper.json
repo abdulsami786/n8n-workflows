@@ -1,0 +1,389 @@
+{
+  "id": "lo09RetrySweep00",
+  "name": "LeadOps 09 · Retry sweeper",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Retry sweeper\nEvery 2 minutes: replays failed events whose back-off has elapsed (2, 4, 8, 16, 32, 60 min), events accepted but never processed (for example n8n restarted mid-flight) and events stuck in processing. After MAX_ATTEMPTS the event is marked dead and the operator is alerted.\n\nManual replay: `UPDATE leadops.inbox SET status='failed', attempts=0, next_retry_at=now() WHERE id=...`",
+        "height": 300,
+        "width": 400,
+        "color": 7
+      },
+      "id": "3fcfccb1-4254-576a-a0e1-9ae38a9c04d5",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "eed5d17d-06ed-5faf-8a96-cd5b9326b11f",
+      "name": "Every 2 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS inbox_id FROM leadops.inbox\n WHERE (status = 'failed' AND next_retry_at <= now())\n    OR (status = 'pending' AND received_at < now() - interval '3 minutes')\n    OR (status = 'processing' AND locked_at < now() - interval '10 minutes')\n ORDER BY received_at\n LIMIT 25;",
+        "options": {}
+      },
+      "id": "da3666db-5262-5930-9a3c-c410e473055d",
+      "name": "Events to retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "92d254ec-5e76-5ddf-ad69-59ea41564e35",
+      "name": "Loop over events",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f07f97b6-30a3-5d1c-a4e1-993cad791be0",
+              "name": "inbox_id",
+              "value": "={{ $json.inbox_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "34d74d6f-5325-53ec-a4b9-1d73d6bef772",
+      "name": "Current event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo03Processor000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "inbox_id": "={{ $json.inbox_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "inbox_id",
+              "displayName": "inbox_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "7428c3ee-1496-579b-8914-c16e61be54f7",
+      "name": "Process lead",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.mark_inbox_failed($1::bigint, $2::text, $3::int) AS r;",
+        "options": {
+          "queryReplacement": "={{ [ $('Current event').first().json.inbox_id, typeof $json.error === 'string' ? $json.error : ($json.error?.message || $json.message || JSON.stringify($json.error || 'Processing failed')), Number($env.MAX_ATTEMPTS || 6) ] }}"
+        }
+      },
+      "id": "8290d028-4062-5ee3-a783-efa792dc1ecc",
+      "name": "Schedule retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1200,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6a4c07ba-05f3-5f29-a0b7-0c7cce6505a1",
+              "leftValue": "={{ !!$json.r && ($json.r.status === 'dead' || $json.r.attempts <= 1) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "883d272b-7c28-5bce-9138-72b066718f86",
+      "name": "Alert needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo10Alerts000000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "severity": "={{ $json.r.status === 'dead' ? 'critical' : 'warning' }}",
+            "title": "={{ $json.r.status === 'dead' ? 'Lead event gave up after ' + $json.r.attempts + ' attempts (needs manual replay)' : 'Lead event failed, retrying automatically' }}",
+            "detail": "={{ 'Inbox #' + $json.r.inbox_id + ' (' + $json.r.source + ', ' + $json.r.event_key + ')\\nError: ' + $json.r.last_error + '\\nNext retry: ' + ($json.r.status === 'dead' ? 'none, replay manually' : $json.r.next_retry_at) }}",
+            "fingerprint": "={{ 'inbox:' + $json.r.inbox_id + ':' + $json.r.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "fingerprint",
+              "displayName": "fingerprint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "456923b0-226b-59d6-8272-dc9413356da4",
+      "name": "Alert the operator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1680,
+        180
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 2 minutes": {
+      "main": [
+        [
+          {
+            "node": "Events to retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events to retry": {
+      "main": [
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over events": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Current event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current event": {
+      "main": [
+        [
+          {
+            "node": "Process lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process lead": {
+      "main": [
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule retry": {
+      "main": [
+        [
+          {
+            "node": "Alert needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert needed?": {
+      "main": [
+        [
+          {
+            "node": "Alert the operator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert the operator": {
+      "main": [
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

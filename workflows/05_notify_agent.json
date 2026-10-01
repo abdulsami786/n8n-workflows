@@ -1,0 +1,393 @@
+{
+  "id": "lo05Notify000000",
+  "name": "LeadOps 05 · Notify agent",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Notify (sub-workflow)\nInputs: `inquiry_id`, `kind` (new | reminder | escalation), `agent_id` (0 = assigned agent).\n\nTelegram with \"Open and claim\" + \"WhatsApp with greeting\" buttons (greeting in the family's language), and/or email. Link previews are disabled so chat apps never open the claim link.\n\nEnv: TELEGRAM_BOT_TOKEN, SMTP_ENABLED, SMTP_FROM, PUBLIC_BASE_URL",
+        "height": 300,
+        "width": 400,
+        "color": 7
+      },
+      "id": "431682ee-d3aa-5858-bc16-f0ef0b75c449",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "inquiry_id",
+              "type": "number"
+            },
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "agent_id",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "761122e5-00da-5975-8f52-5da9d0b05334",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ba04ff51-a366-57de-b5dc-f77ceec30b76",
+              "name": "public_base_url",
+              "value": "={{ ($env.PUBLIC_BASE_URL || 'http://localhost:5678').replace(/\\/+$/, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "362956fa-9afa-5580-a245-cba1d78f0e63",
+              "name": "telegram_enabled",
+              "value": "={{ !!$env.TELEGRAM_BOT_TOKEN }}",
+              "type": "boolean"
+            },
+            {
+              "id": "d52e6775-2792-5a82-9a3c-7b846bb85de1",
+              "name": "email_enabled",
+              "value": "={{ ($env.SMTP_ENABLED || 'false') === 'true' }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "49141892-440d-5f77-8494-e47588235eaf",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.inquiry_json($1::bigint) AS inq,\n       (SELECT to_jsonb(a) - 'created_at' FROM leadops.agents a\n         WHERE a.id = coalesce(nullif($3::int, 0),\n                               (SELECT assigned_agent_id FROM leadops.inquiries WHERE id = $1::bigint))) AS recipient,\n       $2::text AS kind,\n       leadops.setting('timezone', 'Asia/Dubai') AS tz,\n       leadops.setting('school_name', 'Admissions') AS school_name;",
+        "options": {
+          "queryReplacement": "={{ [ $json.inquiry_id, $json.kind || 'new', $json.agent_id || 0 ] }}"
+        }
+      },
+      "id": "2930c10c-134b-5604-b977-59b13f18627f",
+      "name": "Load inquiry and recipient",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Telegram + email message for a new inquiry, a reminder or an escalation.\nconst cfg = $('Config').first().json;\nconst esc = (s) => String(s === null || s === undefined ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst out = [];\nfor (const item of $input.all()) {\n  const { inq, recipient, kind, tz, school_name } = item.json;\n  if (!inq) throw new Error('Inquiry not found for notification');\n  if (!recipient) throw new Error(`Inquiry ${inq.inquiry_id}: no recipient (check routing rules / escalation contact)`);\n  const L = inq.lead || {};\n  const fmt = (iso, opts) => iso ? new Intl.DateTimeFormat('en-GB', { timeZone: tz, ...opts }).format(new Date(iso)) : '';\n  const hhmm = (iso) => fmt(iso, { hour: '2-digit', minute: '2-digit' });\n  const dayTime = (iso) => fmt(iso, { weekday: 'short', hour: '2-digit', minute: '2-digit' });\n  const channel = inq.channel === 'meta'\n    ? (inq.platform === 'ig' ? 'Instagram lead form' : 'Facebook lead form')\n    : ({ web: 'Website form', whatsapp: 'WhatsApp' }[inq.channel] || inq.channel);\n  const langName = { ar: 'Arabic', en: 'English', fr: 'French', ur: 'Urdu', hi: 'Hindi' }[inq.language] || String(inq.language || '').toUpperCase();\n  const mins = Math.round(Number(inq.minutes_open || 0));\n  const headline = {\n    new: inq.is_repeat ? '🔁 Returning family, new inquiry' : '🆕 New inquiry',\n    reminder: `⏰ Still waiting: ${mins} min, not claimed yet`,\n    escalation: `🚨 Escalation: unclaimed for ${mins} min`,\n  }[kind] || '🆕 New inquiry';\n  const claimUrl = `${cfg.public_base_url}/webhook/leadops/lead?t=${inq.public_token}&u=${encodeURIComponent(recipient.code)}`;\n  const digits = String(L.phone_e164 || '').replace(/\\D/g, '');\n  const firstName = L.first_name || L.full_name || '';\n  const greet = inq.language === 'ar'\n    ? `مرحباً ${firstName}، معك ${recipient.name} من قسم القبول في ${school_name}. شكراً لتواصلكم معنا، متى يناسبكم أن نتحدث؟`\n    : `Hello ${firstName}, this is ${recipient.name} from ${school_name} Admissions. Thank you for your inquiry. When would be a good time to talk?`;\n  const waUrl = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(greet)}` : null;\n  const answers = Object.entries(inq.answers || {}).slice(0, 8);\n  const due = inq.sla_due_at\n    ? (inq.after_hours ? `Arrived after hours. Please pick up by ${dayTime(inq.sla_due_at)}.`\n      : `Respond by ${hhmm(inq.sla_due_at)} (${inq.rule ? inq.rule.sla_minutes : '?'}-minute promise).`)\n    : null;\n  const lines = [\n    `<b>${esc(headline)}</b>`,\n    `${esc(channel)}${inq.campaign_name ? ' · ' + esc(inq.campaign_name) : ''}`,\n    '',\n    `<b>${esc(L.full_name || 'Unknown name')}</b>${langName ? ' · ' + esc(langName) : ''}`,\n    L.phone_e164 ? `📞 ${esc(L.phone_e164)}` : null,\n    L.email ? `✉️ ${esc(L.email)}` : null,\n    ...answers.map(([k, v]) => `• ${esc(k)}: ${esc(v)}`),\n    inq.message ? `💬 \"${esc(String(inq.message).slice(0, 300))}\"` : null,\n    '',\n    inq.is_repeat && L.inquiry_count > 1 ? `Inquiry number ${L.inquiry_count} from this family.` : null,\n    kind === 'escalation' && inq.assigned_agent ? `Assigned to ${esc(inq.assigned_agent.name)}, not claimed yet.` : null,\n    due ? esc(due) : null,\n    inq.is_test ? '<i>Test inquiry</i>' : null,\n  ].filter((l) => l !== null);\n  const keyboard = [[{ text: kind === 'escalation' ? 'Open and take over' : 'Open and claim', url: claimUrl }]];\n  if (waUrl) keyboard.push([{ text: 'WhatsApp with greeting', url: waUrl }]);\n  const rows = [\n    ['Channel', channel + (inq.campaign_name ? ' · ' + inq.campaign_name : '')],\n    ['Phone', L.phone_e164], ['Email', L.email], ['Language', langName],\n    ...answers, ['Message', inq.message], ['Deadline', due],\n  ].filter(([, v]) => v);\n  const emailHtml = `<div style=\"font-family:Segoe UI,Arial,sans-serif;color:#12241F;max-width:560px\">\n<p style=\"font-size:16px;margin:0 0 4px\"><b>${esc(headline)}</b></p>\n<p style=\"font-size:22px;margin:0 0 16px\">${esc(L.full_name || 'Unknown name')}</p>\n<table style=\"border-collapse:collapse;font-size:14px\">${rows.map(([k, v]) => `<tr><td style=\"padding:4px 16px 4px 0;color:#5E6E68;vertical-align:top\">${esc(k)}</td><td style=\"padding:4px 0\">${esc(v)}</td></tr>`).join('')}</table>\n<p style=\"margin:20px 0\"><a href=\"${esc(claimUrl)}\" style=\"background:#0B6E4F;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none\">${kind === 'escalation' ? 'Open and take over' : 'Open and claim'}</a></p>\n</div>`;\n  out.push({ json: {\n    inquiry_id: inq.inquiry_id, kind, recipient_id: recipient.id, recipient_name: recipient.name,\n    telegram_chat_id: recipient.telegram_chat_id || null, email: recipient.email || null,\n    tg_text: lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n'),\n    tg_markup: { inline_keyboard: keyboard },\n    email_subject: `${headline.replace(/^[^A-Za-z]+/, '')}: ${L.full_name || 'Unknown'} (${channel})`,\n    email_html: emailHtml,\n    claim_url: claimUrl,\n    send_telegram: !!(recipient.telegram_chat_id && cfg.telegram_enabled),\n    send_email: !!(recipient.email && cfg.email_enabled),\n  } });\n}\nfor (const o of out) {\n  if (!o.json.send_telegram && !o.json.send_email) {\n    throw new Error(`Agent \"${o.json.recipient_name}\" has no working notification channel: set agents.telegram_chat_id (and TELEGRAM_BOT_TOKEN) or agents.email (and SMTP_ENABLED=true)`);\n  }\n}\nreturn out;\n"
+      },
+      "id": "f51cf552-a286-58aa-ae17-d58fc409694f",
+      "name": "Compose message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4adbb066-f552-5b33-905d-863748f4bbb1",
+              "leftValue": "={{ $json.send_telegram }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "25a4e1a3-c222-560c-8654-7106560ce225",
+      "name": "Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ ($env.TELEGRAM_API_BASE || 'https://api.telegram.org') + '/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "options": {
+          "timeout": 15000
+        },
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.telegram_chat_id, text: $json.tg_text, parse_mode: \"HTML\", reply_markup: $json.tg_markup || undefined, link_preview_options: { is_disabled: true } }) }}"
+      },
+      "id": "a108f35e-d466-57e3-a156-98d194b8fe8e",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d81d997f-4982-5fee-a976-2f218192b027",
+              "leftValue": "={{ $json.send_email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "6e8db0cd-71d6-5e38-9c0a-f02568ec270e",
+      "name": "Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'leadops@example.com' }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "185d121a-93b9-5663-9846-20774f6ee513",
+      "name": "Send email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1200,
+        100
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "loCredSmtp000001",
+          "name": "LeadOps SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leadops.events (inquiry_id, agent_id, type, detail)\nVALUES ($1::bigint, $2::int, $3::text, jsonb_build_object('channel', $4::text, 'kind', $5::text))\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Compose message').item.json.inquiry_id, $('Compose message').item.json.recipient_id, $('Compose message').item.json.kind === 'reminder' ? 'reminded' : ($('Compose message').item.json.kind === 'escalation' ? 'escalated' : 'notified'), 'telegram', $('Compose message').item.json.kind ] }}"
+        }
+      },
+      "id": "d89c2356-cae8-53c3-901b-364a767956e8",
+      "name": "Log Telegram sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leadops.events (inquiry_id, agent_id, type, detail)\nVALUES ($1::bigint, $2::int, $3::text, jsonb_build_object('channel', $4::text, 'kind', $5::text))\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Compose message').item.json.inquiry_id, $('Compose message').item.json.recipient_id, $('Compose message').item.json.kind === 'reminder' ? 'reminded' : ($('Compose message').item.json.kind === 'escalation' ? 'escalated' : 'notified'), 'email', $('Compose message').item.json.kind ] }}"
+        }
+      },
+      "id": "1322b4bb-bfb1-59c3-9fae-dc43e9481b7d",
+      "name": "Log email sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Load inquiry and recipient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load inquiry and recipient": {
+      "main": [
+        [
+          {
+            "node": "Compose message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose message": {
+      "main": [
+        [
+          {
+            "node": "Telegram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email?": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram": {
+      "main": [
+        [
+          {
+            "node": "Log Telegram sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email": {
+      "main": [
+        [
+          {
+            "node": "Log email sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

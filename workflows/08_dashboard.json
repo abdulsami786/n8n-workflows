@@ -1,0 +1,235 @@
+{
+  "id": "lo08Dashboard000",
+  "name": "LeadOps 08 · Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Dashboard\n`/webhook/leadops/dashboard?days=7|30|90` (basic auth). Add `&format=json` for the raw metrics (Looker Studio, Power BI...).\n\nVolume by channel, time to first response (staffed vs after hours), promise kept %, campaigns, team, live queue, weekday x hour heatmap, pipeline health. One SQL call.",
+        "height": 260,
+        "width": 380,
+        "color": 7
+      },
+      "id": "5fe4af91-fa30-5224-a792-29e4a72c672a",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "path": "leadops/dashboard",
+        "responseMode": "responseNode",
+        "options": {},
+        "authentication": "basicAuth"
+      },
+      "id": "77a1da1c-686d-562c-8869-88b3ee78b928",
+      "name": "Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "3be9cdcc-3912-5e36-88e0-e1ef65851c91",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "loCredDashAuth01",
+          "name": "LeadOps dashboard login"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.dashboard_data($1::int) AS data;",
+        "options": {
+          "queryReplacement": "={{ [ Math.min(Math.max(parseInt($json.query.days) || 30, 1), 365) ] }}"
+        }
+      },
+      "id": "df1e900d-e7a7-574c-8241-d07ea398831c",
+      "name": "Load metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "04908d0b-2cde-57b2-85fc-ed854b308e3a",
+              "leftValue": "={{ $('Dashboard').first().json.query.format === 'json' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a9847ab3-ffe7-5ca7-a091-81a6b91e05d1",
+      "name": "JSON requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.data) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a187208b-3481-5cfa-bcf9-f0e44856aab9",
+      "name": "Send JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Injects the metrics JSON into the dashboard template.\n// \"<\" is escaped so a family name like \"</script>\" can never break out of the data block,\n// and a replacer function is used so \"$&\" inside data is never interpreted by String.replace.\nconst TEMPLATE = \"<!doctype html>\\n<html lang=\\\"en\\\">\\n<head>\\n<meta charset=\\\"utf-8\\\">\\n<meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1, viewport-fit=cover\\\">\\n<title>Admissions response report</title>\\n<link rel=\\\"preconnect\\\" href=\\\"https://fonts.googleapis.com\\\">\\n<link rel=\\\"preconnect\\\" href=\\\"https://fonts.gstatic.com\\\" crossorigin>\\n<link href=\\\"https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600&display=swap\\\" rel=\\\"stylesheet\\\">\\n<style>\\n:root {\\n  --bg: #F3F5F1; --surface: #FFFFFF; --ink: #12241F; --muted: #5B6B65; --faint: #8C9A94; --rule: #DAE0DA;\\n  --accent: #0B6E4F; --meta: #5B4FD1; --web: #CF8605; --wa: #1E9E62; --late: #C4363D; --soft-late: #F6E3E3;\\n  --heat: 11, 110, 79;\\n  color-scheme: light;\\n  box-sizing: border-box;\\n  padding-top: env(safe-area-inset-top, 0px);\\n  padding-bottom: env(safe-area-inset-bottom, 0px);\\n}\\n@media (prefers-color-scheme: dark) {\\n  :root:not([data-theme=\\\"light\\\"]) {\\n    --bg: #0D1613; --surface: #14201C; --ink: #E6EEEA; --muted: #9AAAA4; --faint: #6F7F79; --rule: #26342F;\\n    --accent: #3FBF8F; --meta: #9C93FF; --web: #F2B13C; --wa: #45C98A; --late: #FF6B70; --soft-late: #3A1E20;\\n    --heat: 63, 191, 143; color-scheme: dark;\\n  }\\n}\\n:root[data-theme=\\\"dark\\\"] {\\n  --bg: #0D1613; --surface: #14201C; --ink: #E6EEEA; --muted: #9AAAA4; --faint: #6F7F79; --rule: #26342F;\\n  --accent: #3FBF8F; --meta: #9C93FF; --web: #F2B13C; --wa: #45C98A; --late: #FF6B70; --soft-late: #3A1E20;\\n  --heat: 63, 191, 143; color-scheme: dark;\\n}\\nhtml { scroll-padding-top: env(safe-area-inset-top, 0px); }\\n*, *::before, *::after { box-sizing: inherit; }\\nbody {\\n  margin: 0; background: var(--bg); color: var(--ink);\\n  font-family: \\\"Readex Pro\\\", \\\"Segoe UI\\\", \\\"Noto Sans Arabic\\\", Tahoma, system-ui, sans-serif;\\n  font-weight: 300; font-size: 16px; line-height: 1.55;\\n  font-feature-settings: \\\"tnum\\\" 1; -webkit-font-smoothing: antialiased;\\n}\\na { color: inherit; }\\na:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }\\n.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 22px 56px; }\\n.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 24px; }\\n.school { font-weight: 500; }\\n.school span { color: var(--muted); font-weight: 300; }\\n.period { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; background: var(--surface); }\\n.period a { text-decoration: none; padding: 4px 14px; border-radius: 999px; color: var(--muted); font-size: 14px; }\\n.period a[aria-current=\\\"true\\\"] { background: var(--ink); color: var(--bg); }\\n.lede { font-size: clamp(26px, 3.6vw, 40px); line-height: 1.22; font-weight: 300; letter-spacing: -0.012em;\\n        max-width: 26ch; margin: 44px 0 14px; }\\n.sub { color: var(--muted); max-width: 70ch; margin: 0 0 30px; }\\n.demo { display: inline-block; font-size: 13px; color: var(--muted); border: 1px dashed var(--rule); padding: 2px 10px; border-radius: 999px; margin-top: 6px; }\\nsection { padding: 30px 0 8px; border-top: 1px solid var(--rule); margin-top: 30px; }\\nh2 { font-size: 20px; font-weight: 500; margin: 0 0 4px; letter-spacing: -0.005em; }\\n.note { color: var(--muted); font-size: 14px; margin: 0 0 16px; max-width: 72ch; }\\nsvg { display: block; width: 100%; height: auto; max-width: 100%; overflow: visible; }\\nsvg text { font-family: inherit; fill: var(--muted); font-size: 12px; }\\n.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); margin: 10px 0 0; padding: 0; list-style: none; }\\n.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }\\n.legend i.hollow { background: transparent !important; border: 2px solid var(--muted); width: 10px; height: 10px; }\\n.grid2 { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 26px 48px; }\\n@media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }\\n.queue { list-style: none; margin: 0; padding: 0; }\\n.queue li { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 12px 0; border-bottom: 1px solid var(--rule); }\\n.queue li:last-child { border-bottom: 0; }\\n.queue .who { font-weight: 500; }\\n.queue .meta { color: var(--muted); font-size: 14px; grid-column: 1; }\\n.queue .age { text-align: right; font-weight: 500; white-space: nowrap; }\\n.queue .age small { display: block; font-weight: 300; color: var(--muted); font-size: 13px; }\\n.queue li.late .age { color: var(--late); }\\n.empty { color: var(--muted); padding: 14px 0; }\\n.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }\\n.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }\\ntable { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }\\nth { text-align: left; font-weight: 400; color: var(--muted); padding: 6px 12px 8px 0; border-bottom: 1px solid var(--rule); }\\ntd { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }\\ntd.n, th.n { text-align: right; }\\ntr:last-child td { border-bottom: 0; }\\ntd.bad { color: var(--late); }\\n.trend { display: flex; align-items: baseline; gap: 12px; margin: 0 0 6px; }\\n.trend b { font-size: 30px; font-weight: 400; }\\n.health { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 22px; margin-top: 8px; }\\n.health .warn { color: var(--late); }\\nfooter { margin-top: 40px; color: var(--faint); font-size: 13px; }\\n</style>\\n</head>\\n<body>\\n<main class=\\\"wrap\\\" id=\\\"app\\\" aria-live=\\\"polite\\\"></main>\\n<script id=\\\"datasets\\\" type=\\\"application/json\\\">__DATASETS__</script>\\n<script>\\n(function () {\\n  'use strict';\\n  var DATASETS = JSON.parse(document.getElementById('datasets').textContent || '{}');\\n  var app = document.getElementById('app');\\n  var CH = {\\n    meta: { label: 'Facebook & Instagram forms', short: 'Meta form', color: 'var(--meta)' },\\n    web: { label: 'Website form', short: 'Website', color: 'var(--web)' },\\n    whatsapp: { label: 'WhatsApp (phase 2)', short: 'WhatsApp', color: 'var(--wa)' }\\n  };\\n  var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];\\n\\n  function esc(s) {\\n    return String(s == null ? '' : s).replace(/[&<>\\\"']/g, function (c) {\\n      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\\\"': '&quot;', \\\"'\\\": '&#39;' }[c];\\n    });\\n  }\\n  function trim0(v) { return String(v).replace(/\\\\.0$/, ''); }\\n  function fmtMin(m) {\\n    if (m == null || isNaN(m)) return 'n/a';\\n    m = Number(m);\\n    if (m < 1) return Math.max(1, Math.round(m * 60)) + ' s';\\n    if (m < 60) return (m < 10 ? trim0(m.toFixed(1)) : Math.round(m)) + ' min';\\n    var h = m / 60;\\n    if (h < 24) return (h < 10 ? trim0(h.toFixed(1)) : Math.round(h)) + ' h';\\n    return trim0((h / 24).toFixed(1)) + ' d';\\n  }\\n  function pct(v) { return v == null ? 'n/a' : Math.round(Number(v)) + '%'; }\\n  function num(v) { return Number(v || 0).toLocaleString('en-US'); }\\n  function rnd(i) { var t = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return t - Math.floor(t); }\\n  function ago(iso) {\\n    if (!iso) return 'never';\\n    var m = (Date.now() - new Date(iso).getTime()) / 60000;\\n    return m < 1 ? 'just now' : fmtMin(m) + ' ago';\\n  }\\n\\n  /* Hero: every inquiry placed by how long it took to be claimed (log scale) */\\n  function strip(d) {\\n    var W = 1000, H = 170, L = 6, R = 860, oL = 890, oR = 994, top = 26, bottom = H - 34;\\n    var lo = 0.5, hi = 2880;\\n    function x(m) {\\n      m = Math.max(lo, Math.min(hi, m));\\n      return L + (Math.log(m) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (R - L);\\n    }\\n    var ticks = [[1, '1 min'], [5, '5 min'], [15, '15 min'], [60, '1 h'], [240, '4 h'], [720, '12 h'], [1440, '1 day']];\\n    var s = '<svg viewBox=\\\"0 0 ' + W + ' ' + H + '\\\" role=\\\"img\\\" aria-label=\\\"Time to first response for each inquiry\\\">';\\n    ticks.forEach(function (t) {\\n      var tx = x(t[0]).toFixed(1);\\n      s += '<line x1=\\\"' + tx + '\\\" x2=\\\"' + tx + '\\\" y1=\\\"' + top + '\\\" y2=\\\"' + bottom + '\\\" stroke=\\\"var(--rule)\\\"/>';\\n      s += '<text x=\\\"' + tx + '\\\" y=\\\"' + (H - 12) + '\\\" text-anchor=\\\"middle\\\">' + t[1] + '</text>';\\n    });\\n    var sx = x(d.sla_reference_min || 15).toFixed(1);\\n    s += '<line x1=\\\"' + sx + '\\\" x2=\\\"' + sx + '\\\" y1=\\\"10\\\" y2=\\\"' + bottom + '\\\" stroke=\\\"var(--ink)\\\" stroke-dasharray=\\\"3 4\\\"/>';\\n    s += '<text x=\\\"' + (Number(sx) + 6) + '\\\" y=\\\"18\\\" style=\\\"fill:var(--ink)\\\">' + esc(d.sla_reference_min) + '-minute promise</text>';\\n    s += '<rect x=\\\"' + oL + '\\\" y=\\\"' + top + '\\\" width=\\\"' + (oR - oL) + '\\\" height=\\\"' + (bottom - top) + '\\\" rx=\\\"6\\\" fill=\\\"var(--soft-late)\\\" opacity=\\\"0.55\\\"/>';\\n    s += '<text x=\\\"' + ((oL + oR) / 2) + '\\\" y=\\\"' + (H - 12) + '\\\" text-anchor=\\\"middle\\\">waiting</text>';\\n    (d.strip || []).forEach(function (p, i) {\\n      var claim = p[0], ch = CH[p[1]] || CH.web, after = p[3];\\n      var cx = claim == null ? oL + 10 + rnd(i + 7) * (oR - oL - 20) : x(claim);\\n      var cy = top + 6 + rnd(i) * (bottom - top - 12);\\n      s += after\\n        ? '<circle cx=\\\"' + cx.toFixed(1) + '\\\" cy=\\\"' + cy.toFixed(1) + '\\\" r=\\\"3.2\\\" fill=\\\"none\\\" stroke=\\\"' + ch.color + '\\\" stroke-width=\\\"1.4\\\" opacity=\\\"0.8\\\"/>'\\n        : '<circle cx=\\\"' + cx.toFixed(1) + '\\\" cy=\\\"' + cy.toFixed(1) + '\\\" r=\\\"3.4\\\" fill=\\\"' + ch.color + '\\\" opacity=\\\"0.72\\\"/>';\\n    });\\n    return s + '</svg>';\\n  }\\n\\n  function bars(daily) {\\n    var W = 1000, H = 200, top = 12, bottom = H - 28, n = daily.length || 1, gap = n > 60 ? 1 : 2;\\n    var bw = W / n;\\n    var max = 1;\\n    daily.forEach(function (r) { max = Math.max(max, r.meta + r.web + r.whatsapp); });\\n    var step = max > 20 ? 10 : 5, nice = Math.ceil(max / step) * step;\\n    function y(v) { return bottom - v / nice * (bottom - top); }\\n    var s = '<svg viewBox=\\\"0 0 ' + W + ' ' + H + '\\\" role=\\\"img\\\" aria-label=\\\"Inquiries per day by channel\\\">';\\n    for (var g = 0; g <= nice; g += step) {\\n      s += '<line x1=\\\"0\\\" x2=\\\"' + W + '\\\" y1=\\\"' + y(g).toFixed(1) + '\\\" y2=\\\"' + y(g).toFixed(1) + '\\\" stroke=\\\"var(--rule)\\\"/>';\\n      if (g) s += '<text x=\\\"' + (W - 2) + '\\\" y=\\\"' + (y(g) - 4).toFixed(1) + '\\\" text-anchor=\\\"end\\\">' + g + '</text>';\\n    }\\n    var every = Math.ceil(n / 8);\\n    daily.forEach(function (r, i) {\\n      var x0 = i * bw + gap / 2, w = Math.max(1, bw - gap), acc = 0;\\n      ['meta', 'web', 'whatsapp'].forEach(function (k) {\\n        var v = r[k] || 0;\\n        if (!v) return;\\n        s += '<rect x=\\\"' + x0.toFixed(1) + '\\\" y=\\\"' + y(acc + v).toFixed(1) + '\\\" width=\\\"' + w.toFixed(1) + '\\\" height=\\\"' + (y(acc) - y(acc + v)).toFixed(1) + '\\\" fill=\\\"' + CH[k].color + '\\\"><title>' + esc(r.day) + ': ' + v + ' ' + esc(CH[k].short) + '</title></rect>';\\n        acc += v;\\n      });\\n      if (i % every === 0) {\\n        var dt = new Date(r.day + 'T12:00:00Z');\\n        s += '<text x=\\\"' + (x0 + w / 2).toFixed(1) + '\\\" y=\\\"' + (H - 8) + '\\\" text-anchor=\\\"middle\\\">' + dt.getUTCDate() + ' ' + dt.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' }) + '</text>';\\n      }\\n    });\\n    return s + '</svg>';\\n  }\\n\\n  function heat(cells, rules) {\\n    var cw = 38, chh = 24, lx = 44, ty = 8, W = lx + 24 * cw, H = ty + 7 * chh + 24, grid = {}, max = 1;\\n    cells.forEach(function (c) { grid[c[0] + '-' + c[1]] = c[2]; max = Math.max(max, c[2]); });\\n    var s = '<svg viewBox=\\\"0 0 ' + W + ' ' + H + '\\\" role=\\\"img\\\" aria-label=\\\"Inquiries by weekday and hour\\\">';\\n    for (var d = 1; d <= 7; d++) {\\n      s += '<text x=\\\"0\\\" y=\\\"' + (ty + (d - 1) * chh + 16) + '\\\">' + DAYS[d - 1] + '</text>';\\n      for (var h = 0; h < 24; h++) {\\n        var v = grid[d + '-' + h] || 0;\\n        s += '<rect x=\\\"' + (lx + h * cw + 1) + '\\\" y=\\\"' + (ty + (d - 1) * chh + 1) + '\\\" width=\\\"' + (cw - 2) + '\\\" height=\\\"' + (chh - 2) + '\\\" rx=\\\"3\\\" fill=\\\"rgba(var(--heat),' + (v ? (0.12 + 0.88 * v / max).toFixed(2) : 0.05) + ')\\\"><title>' + DAYS[d - 1] + ' ' + (h < 10 ? '0' : '') + h + ':00, ' + v + ' inquiries</title></rect>';\\n      }\\n    }\\n    (rules || []).forEach(function (r) {\\n      if (r.after_hours) return;\\n      var a = r.start.split(':'), b = r.end.split(':');\\n      var h0 = Number(a[0]) + Number(a[1]) / 60, h1 = Number(b[0]) + Number(b[1]) / 60;\\n      if (h1 <= h0) return;\\n      r.days.forEach(function (d) {\\n        s += '<rect x=\\\"' + (lx + h0 * cw).toFixed(1) + '\\\" y=\\\"' + (ty + (d - 1) * chh + 0.5) + '\\\" width=\\\"' + ((h1 - h0) * cw).toFixed(1) + '\\\" height=\\\"' + (chh - 1) + '\\\" fill=\\\"none\\\" stroke=\\\"var(--ink)\\\" stroke-opacity=\\\"0.35\\\" stroke-width=\\\"1\\\"/>';\\n      });\\n    });\\n    for (var t = 0; t < 24; t += 3) s += '<text x=\\\"' + (lx + t * cw + 2) + '\\\" y=\\\"' + (H - 4) + '\\\">' + (t < 10 ? '0' : '') + t + ':00</text>';\\n    return s + '</svg>';\\n  }\\n\\n  function spark(weekly) {\\n    var W = 460, H = 130, pts = weekly.filter(function (w) { return w.median != null; });\\n    if (pts.length < 2) return '<p class=\\\"empty\\\">Not enough history yet.</p>';\\n    var max = Math.max.apply(null, pts.map(function (p) { return p.median; }));\\n    function x(i) { return 8 + i / (pts.length - 1) * (W - 16); }\\n    function y(v) { return 10 + (1 - v / max) * (H - 36); }\\n    var path = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.median).toFixed(1); }).join(' ');\\n    var last = pts[pts.length - 1];\\n    var s = '<svg viewBox=\\\"0 0 ' + W + ' ' + H + '\\\" role=\\\"img\\\" aria-label=\\\"Weekly median response time in staffed hours\\\">';\\n    s += '<path d=\\\"' + path + '\\\" fill=\\\"none\\\" stroke=\\\"var(--accent)\\\" stroke-width=\\\"2.2\\\" stroke-linejoin=\\\"round\\\"/>';\\n    s += '<circle cx=\\\"' + x(pts.length - 1).toFixed(1) + '\\\" cy=\\\"' + y(last.median).toFixed(1) + '\\\" r=\\\"4\\\" fill=\\\"var(--accent)\\\"/>';\\n    s += '<text x=\\\"8\\\" y=\\\"' + (H - 6) + '\\\">week of ' + esc(pts[0].week) + '</text>';\\n    s += '<text x=\\\"' + (W - 8) + '\\\" y=\\\"' + (H - 6) + '\\\" text-anchor=\\\"end\\\">this week</text>';\\n    return s + '</svg>';\\n  }\\n\\n  function render(d) {\\n    var k = (d.kpis && d.kpis.current) || {}, p = (d.kpis && d.kpis.previous) || {};\\n    var total = k.inquiries || 0, families = k.new_leads || 0;\\n    var h = '';\\n    h += '<header class=\\\"top\\\"><div class=\\\"school\\\">' + esc(d.school_name) + ' <span>admissions response report</span></div>';\\n    h += '<nav class=\\\"period\\\" aria-label=\\\"Period\\\">';\\n    [7, 30, 90].forEach(function (n) {\\n      h += '<a href=\\\"?days=' + n + '\\\" data-days=\\\"' + n + '\\\" aria-current=\\\"' + (n === d.days) + '\\\">' + n + ' days</a>';\\n    });\\n    h += '</nav></header>';\\n\\n    if (!total) {\\n      h += '<p class=\\\"lede\\\">No inquiries in the last ' + d.days + ' days yet.</p>';\\n      h += '<p class=\\\"sub\\\">Send a test lead (see tests/ in the project) and this page fills in within a minute.</p>';\\n    } else {\\n      h += '<p class=\\\"lede\\\">' + num(total) + ' inquiries in the last ' + d.days + ' days, ' + num(families) + ' of them from new families. ' +\\n        'In staffed hours, half were picked up within ' + fmtMin(k.median_claim_staffed) + ', and ' + pct(k.sla_pct_staffed) + ' within the promised time.</p>';\\n      var subBits = [];\\n      if (k.after_hours_pct) subBits.push(pct(k.after_hours_pct) + ' arrived after hours and were picked up a median of ' + fmtMin(k.median_claim_after_hours) + ' later, at the start of the next shift.');\\n      if (p.inquiries) subBits.push('Previous ' + d.days + ' days: ' + num(p.inquiries) + ' inquiries, staffed-hours median ' + fmtMin(p.median_claim_staffed) + ', ' + pct(p.sla_pct_staffed) + ' on time.');\\n      if (k.merged) subBits.push(num(k.merged) + ' double submissions were merged instead of alerting the team twice.');\\n      h += '<p class=\\\"sub\\\">' + esc(subBits.join(' ')) + '</p>';\\n    }\\n    if (d.has_demo) h += '<span class=\\\"demo\\\">Includes generated demo history</span>';\\n\\n    h += '<section aria-labelledby=\\\"s-strip\\\"><h2 id=\\\"s-strip\\\">Time to first response</h2>';\\n    h += '<p class=\\\"note\\\">Each dot is one inquiry, placed by how long it took someone on the team to claim it. Hollow dots arrived after hours.</p>';\\n    h += strip(d);\\n    h += '<ul class=\\\"legend\\\">' + ['meta', 'web'].map(function (c) { return '<li><i style=\\\"background:' + CH[c].color + '\\\"></i>' + CH[c].label + '</li>'; }).join('') + '<li><i class=\\\"hollow\\\"></i>after hours</li></ul></section>';\\n\\n    h += '<section class=\\\"grid2\\\"><div><h2>Waiting right now</h2>';\\n    var open = d.open || [];\\n    if (!open.length) {\\n      h += '<p class=\\\"empty\\\">No one is waiting. Every inquiry has been picked up.</p>';\\n    } else {\\n      h += '<p class=\\\"note\\\">' + open.length + ' ' + (open.length === 1 ? 'inquiry has' : 'inquiries have') + ' not been claimed yet. Reminders and escalations go out automatically.</p><ul class=\\\"queue\\\">';\\n      open.slice(0, 8).forEach(function (o) {\\n        var tags = [CH[o.channel] ? CH[o.channel].short : o.channel];\\n        if (o.campaign) tags.push(o.campaign);\\n        if (o.agent) tags.push('with ' + o.agent);\\n        if (o.escalated) tags.push('escalated');\\n        else if (o.reminders) tags.push(o.reminders + (o.reminders === 1 ? ' reminder' : ' reminders'));\\n        h += '<li class=\\\"' + (o.overdue ? 'late' : '') + '\\\"><span class=\\\"who\\\" dir=\\\"auto\\\">' + esc(o.name) + '</span>' +\\n          '<span class=\\\"age\\\">' + fmtMin(o.minutes_open) + '<small>' + (o.after_hours && !o.overdue ? 'after hours' : (o.overdue ? 'past promise' : 'waiting')) + '</small></span>' +\\n          '<span class=\\\"meta\\\">' + esc(tags.join(' \\u00b7 ')) + '</span></li>';\\n      });\\n      h += '</ul>';\\n    }\\n    h += '</div><div><h2>Getting faster</h2>';\\n    var wk = (d.weekly || []).filter(function (w) { return w.median != null; });\\n    if (wk.length > 1) {\\n      h += '<div class=\\\"trend\\\"><b>' + fmtMin(wk[wk.length - 1].median) + '</b><span class=\\\"note\\\" style=\\\"margin:0\\\">median this week, staffed hours<br>from ' + fmtMin(wk[0].median) + ' in the first week shown</span></div>';\\n    }\\n    h += spark(d.weekly || []) + '</div></section>';\\n\\n    var byCh = {};\\n    (d.channels || []).forEach(function (c) { byCh[c.channel] = c; });\\n    h += '<section><h2>Inquiries per day</h2><p class=\\\"note\\\">';\\n    h += ['meta', 'web'].map(function (c) {\\n      var x = byCh[c] || {};\\n      return esc(CH[c].label) + ': ' + num(x.inquiries) + (x.median_claim_min != null ? ' (median response ' + fmtMin(x.median_claim_min) + ')' : '');\\n    }).join('. ') + '. WhatsApp joins in phase 2.</p>';\\n    h += bars(d.daily || []);\\n    h += '<ul class=\\\"legend\\\">' + ['meta', 'web', 'whatsapp'].map(function (c) { return '<li><i style=\\\"background:' + CH[c].color + '\\\"></i>' + CH[c].label + '</li>'; }).join('') + '</ul></section>';\\n\\n    var cells = d.heatmap || [], outside = 0, all = 0;\\n    cells.forEach(function (c) { all += c[2]; });\\n    h += '<section><h2>When families write to us</h2><p class=\\\"note\\\">Local time (' + esc(d.timezone) + '). Outlined blocks are staffed hours.' +\\n      (k.after_hours_pct ? ' ' + pct(k.after_hours_pct) + ' of inquiries land outside them.' : '') + '</p>';\\n    h += '<div class=\\\"scroll\\\">' + heat(cells, d.rules) + '</div></section>';\\n\\n    h += '<section class=\\\"grid2\\\"><div><h2>Campaigns</h2><p class=\\\"note\\\">Where inquiries came from, and how fast each source was answered.</p><div class=\\\"scroll\\\"><table><thead><tr><th>Campaign</th><th class=\\\"n\\\">Inquiries</th><th class=\\\"n\\\">Arabic</th><th class=\\\"n\\\">Median</th><th class=\\\"n\\\">On time</th></tr></thead><tbody>';\\n    (d.campaigns || []).forEach(function (c) {\\n      h += '<tr><td><span class=\\\"dot\\\" style=\\\"background:' + (CH[c.channel] || CH.web).color + '\\\"></span>' + esc(c.campaign) + '</td><td class=\\\"n\\\">' + num(c.inquiries) + '</td><td class=\\\"n\\\">' + pct(c.arabic_pct) + '</td><td class=\\\"n\\\">' + fmtMin(c.median_claim_min) + '</td><td class=\\\"n' + (c.sla_pct != null && c.sla_pct < 70 ? ' bad' : '') + '\\\">' + pct(c.sla_pct) + '</td></tr>';\\n    });\\n    h += '</tbody></table></div></div><div><h2>Team</h2><p class=\\\"note\\\">Claims are counted for whoever tapped claim first.</p><div class=\\\"scroll\\\"><table><thead><tr><th>Name</th><th class=\\\"n\\\">Assigned</th><th class=\\\"n\\\">Median</th><th class=\\\"n\\\">On time</th><th class=\\\"n\\\">Open</th></tr></thead><tbody>';\\n    (d.agents || []).forEach(function (a) {\\n      h += '<tr><td>' + esc(a.agent) + '</td><td class=\\\"n\\\">' + num(a.assigned) + '</td><td class=\\\"n\\\">' + fmtMin(a.median_claim_min) + '</td><td class=\\\"n' + (a.sla_pct != null && a.sla_pct < 70 ? ' bad' : '') + '\\\">' + pct(a.sla_pct) + '</td><td class=\\\"n\\\">' + num(a.open) + '</td></tr>';\\n    });\\n    h += '</tbody></table></div></div></section>';\\n\\n    var hl = d.health || {}, ib = hl.inbox || {}, le = hl.last_event || {};\\n    var stuck = (ib.failed || 0) + (ib.pending || 0) + (ib.processing || 0);\\n    h += '<section><h2>Pipeline health</h2><div class=\\\"health\\\">';\\n    h += '<span class=\\\"' + (stuck ? 'warn' : '') + '\\\">' + (stuck ? stuck + ' events waiting for retry' : 'No events waiting for retry') + '</span>';\\n    h += '<span class=\\\"' + (ib.dead ? 'warn' : '') + '\\\">' + (ib.dead ? ib.dead + ' events need manual replay' : 'Nothing failed permanently') + '</span>';\\n    h += '<span>Last Meta lead ' + ago(le.meta) + '</span><span>Last website lead ' + ago(le.web) + '</span>';\\n    if (hl.crm_synced_pct != null) h += '<span>CRM synced ' + pct(hl.crm_synced_pct) + '</span>';\\n    h += '<span>' + num(hl.alerts_24h) + ' alerts in 24 h</span></div></section>';\\n\\n    h += '<footer>Generated ' + esc(new Date(d.generated_at).toLocaleString('en-GB', { timeZone: d.timezone, dateStyle: 'medium', timeStyle: 'short' })) + ' (' + esc(d.timezone) + '). Refreshes every 2 minutes when served live.</footer>';\\n    app.innerHTML = h;\\n\\n    Array.prototype.forEach.call(app.querySelectorAll('.period a'), function (a) {\\n      a.addEventListener('click', function (ev) {\\n        var n = a.getAttribute('data-days');\\n        if (DATASETS[n]) {\\n          ev.preventDefault();\\n          render(DATASETS[n]);\\n          try { history.replaceState(null, '', '?days=' + n); } catch (e) { /* sandboxed viewer */ }\\n        }\\n      });\\n    });\\n  }\\n\\n  var keys = Object.keys(DATASETS);\\n  var want = String(new URLSearchParams(location.search).get('days') || '');\\n  var d = DATASETS[want] || DATASETS['30'] || DATASETS[keys[0]];\\n  if (d) render(d); else app.innerHTML = '<p class=\\\"lede\\\">No data.</p>';\\n  if (/\\\\/webhook(-test)?\\\\//.test(location.pathname)) setTimeout(function () { location.reload(); }, 120000);\\n})();\\n</script>\\n</body>\\n</html>\\n\";\nconst data = $json.data || {};\nconst payload = JSON.stringify({ [String(data.days || 30)]: data })\n  .replace(/</g, '\\\\u003c').replace(/\\u2028/g, '\\\\u2028').replace(/\\u2029/g, '\\\\u2029');\nreturn [{ json: { html: TEMPLATE.replace('__DATASETS__', () => payload) } }];\n"
+      },
+      "id": "a66891d0-dd7f-5082-a7d3-214609005d0d",
+      "name": "Render dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8230842e-db05-5b83-954f-2cf4f4a74f51",
+      "name": "Send dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Load metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load metrics": {
+      "main": [
+        [
+          {
+            "node": "JSON requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON requested?": {
+      "main": [
+        [
+          {
+            "node": "Send JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Render dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render dashboard": {
+      "main": [
+        [
+          {
+            "node": "Send dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

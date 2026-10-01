@@ -1,0 +1,837 @@
+{
+  "id": "lo01MetaIntake00",
+  "name": "LeadOps 01 · Meta Lead Ads intake",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Meta Lead Ads intake\nGET answers Meta's webhook verification (hub.challenge).\n\nPOST verifies the **X-Hub-Signature-256** HMAC against the raw body, stores every `leadgen` change in the durable inbox, answers Meta only after the insert succeeded (so Meta retries if the database is down), then processes each new event.\n\nEnv: META_VERIFY_TOKEN, META_APP_SECRET",
+        "height": 300,
+        "width": 380,
+        "color": 7
+      },
+      "id": "449d6f00-9875-5218-9757-6835adf75394",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "path": "leadops/meta",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "dc6402cf-137c-58b6-a2ed-f1c400c65ab5",
+      "name": "Meta verification (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -300
+      ],
+      "webhookId": "04185dd9-2a16-55d0-a771-789ada1e7215"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6af6dd35-6301-5c45-9898-00b265d7a228",
+              "leftValue": "={{ $json.query['hub.mode'] === 'subscribe' && !!$env.META_VERIFY_TOKEN && $json.query['hub.verify_token'] === $env.META_VERIFY_TOKEN }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "93fd900c-9a13-5b05-9408-0a8660cca902",
+      "name": "Verify token matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Meta verification (GET)').first().json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "23f6b9ef-4fb3-5b79-9c5c-07ef4920c543",
+      "name": "Return challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        -380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "fb76179b-06f4-5dc9-a121-f0c74984262c",
+      "name": "Reject verification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "path": "leadops/meta",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        },
+        "httpMethod": "POST"
+      },
+      "id": "c033ac79-0336-5f24-9512-20b11939efee",
+      "name": "Meta leadgen (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        60
+      ],
+      "webhookId": "3c64258f-5e80-5060-9e5e-a79ee4b8bfcf"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "rawBody",
+        "options": {
+          "encoding": "utf8"
+        }
+      },
+      "id": "5e3389b8-aabe-5ff9-b294-e3755431aab8",
+      "name": "Raw body as text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.rawBody }}",
+        "dataPropertyName": "computed_signature",
+        "secret": "={{ $env.META_APP_SECRET || 'not-configured' }}",
+        "encoding": "hex"
+      },
+      "id": "a4a1049a-4fa5-5258-b02a-ffb44cb99e85",
+      "name": "Compute signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        480,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5b7c20a9-ed03-50f3-9cef-d008d1eaa337",
+              "leftValue": "={{ !!$env.META_APP_SECRET && ('sha256=' + $json.computed_signature) === String($('Meta leadgen (POST)').first().json.headers['x-hub-signature-256'] || '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "1fb81910-1435-5ff4-8ab7-9c5d66a4385d",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Invalid signature",
+        "options": {
+          "responseCode": 401,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "1b9869c7-007b-52c3-aa1f-a49442fa711f",
+      "name": "Reject (bad signature)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo10Alerts000000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "severity": "warning",
+            "title": "Rejected a Meta webhook with an invalid signature",
+            "detail": "={{ 'Check META_APP_SECRET matches the Meta app. Source IP: ' + ($('Meta leadgen (POST)').first().json.headers['x-forwarded-for'] || 'unknown') }}",
+            "fingerprint": "meta-signature"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "fingerprint",
+              "displayName": "fingerprint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "165ee063-6d11-58b0-b517-f9e3921b6b8d",
+      "name": "Alert: bad signature",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Meta batches several leads per request (entry[] -> changes[]).\n// Meta IDs can exceed JavaScript's safe-integer range, so long numeric IDs are\n// quoted in the RAW body before JSON.parse (otherwise the last digits get rounded\n// and the Graph API lookup fails with \"object does not exist\").\nconst raw = $('Raw body as text').first().json.rawBody || '';\nconst safeRaw = raw.replace(/\"(leadgen_id|page_id|form_id|ad_id|adgroup_id|id)\"\\s*:\\s*(\\d{15,})/g, '\"$1\":\"$2\"');\nlet body;\ntry { body = JSON.parse(safeRaw); } catch (e) { throw new Error('Meta payload is not valid JSON: ' + e.message); }\nconst events = [];\nfor (const entry of Array.isArray(body.entry) ? body.entry : []) {\n  for (const change of Array.isArray(entry.changes) ? entry.changes : []) {\n    const v = change && change.value;\n    if (!change || change.field !== 'leadgen' || !v || v.leadgen_id == null) continue;\n    events.push({\n      leadgen_id: String(v.leadgen_id),\n      page_id: v.page_id != null ? String(v.page_id) : (entry.id != null ? String(entry.id) : null),\n      form_id: v.form_id != null ? String(v.form_id) : null,\n      ad_id: v.ad_id != null ? String(v.ad_id) : null,\n      adgroup_id: v.adgroup_id != null ? String(v.adgroup_id) : null,\n      created_time: v.created_time != null ? v.created_time : null,\n      // Only present in signed payloads from tests/send_meta_test_lead.sh\n      test_lead: v.test_lead || null,\n    });\n  }\n}\nreturn [{ json: { object: body.object || null, event_count: events.length, events } }];\n"
+      },
+      "id": "645bf307-9c32-5850-a338-a2ec45ebd3d3",
+      "name": "Extract leadgen events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ev AS (\n  SELECT e->>'leadgen_id' AS key, e AS payload FROM jsonb_array_elements($1::jsonb) e\n), ins AS (\n  INSERT INTO leadops.inbox (source, event_key, payload)\n  SELECT 'meta', key, payload FROM ev\n  ON CONFLICT (source, event_key) DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM ev) AS received,\n       coalesce((SELECT jsonb_agg(id ORDER BY id) FROM ins), '[]'::jsonb) AS new_ids;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.events) ] }}"
+        }
+      },
+      "id": "28b4a32d-6ae6-5c1d-be55-1fee2601e32e",
+      "name": "Save events to inbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1200,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "ad7f2e48-39c5-55d3-b2c0-03c6929940e0",
+      "name": "Acknowledge Meta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per newly accepted inbox event (duplicates from Meta retries are skipped here;\n// failed ones are retried by the Retry Sweeper).\nconst ids = $json.new_ids || [];\nreturn ids.map((id) => ({ json: { inbox_id: Number(id) } }));\n"
+      },
+      "id": "db25b688-a0c2-5abb-998f-41f918dc85f3",
+      "name": "One item per new event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "a217edef-8948-56db-a24e-d1c7fc8af617",
+      "name": "Loop over events",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7e7c9420-fb20-5e78-9b8e-6858c58726bd",
+              "name": "inbox_id",
+              "value": "={{ $json.inbox_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "0964caca-cf81-5110-aaa4-2f1c18d388dd",
+      "name": "Current event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2160,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo03Processor000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "inbox_id": "={{ $json.inbox_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "inbox_id",
+              "displayName": "inbox_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "590d401a-531f-57d3-836a-16c660e2bad5",
+      "name": "Process lead",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT leadops.mark_inbox_failed($1::bigint, $2::text, $3::int) AS r;",
+        "options": {
+          "queryReplacement": "={{ [ $('Current event').first().json.inbox_id, typeof $json.error === 'string' ? $json.error : ($json.error?.message || $json.message || JSON.stringify($json.error || 'Processing failed')), Number($env.MAX_ATTEMPTS || 6) ] }}"
+        }
+      },
+      "id": "f68ffc91-8833-54b1-99f2-3b02fa979d35",
+      "name": "Schedule retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2640,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b249bee7-ac33-5029-994d-c375bb268468",
+              "leftValue": "={{ !!$json.r && ($json.r.status === 'dead' || $json.r.attempts <= 1) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "842727ef-744e-54de-9ae4-6be966708b83",
+      "name": "Alert needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2880,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo10Alerts000000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "severity": "={{ $json.r.status === 'dead' ? 'critical' : 'warning' }}",
+            "title": "={{ $json.r.status === 'dead' ? 'Lead event gave up after ' + $json.r.attempts + ' attempts (needs manual replay)' : 'Lead event failed, retrying automatically' }}",
+            "detail": "={{ 'Inbox #' + $json.r.inbox_id + ' (' + $json.r.source + ', ' + $json.r.event_key + ')\\nError: ' + $json.r.last_error + '\\nNext retry: ' + ($json.r.status === 'dead' ? 'none, replay manually' : $json.r.next_retry_at) }}",
+            "fingerprint": "={{ 'inbox:' + $json.r.inbox_id + ':' + $json.r.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "fingerprint",
+              "displayName": "fingerprint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "7bae6e3f-6e0e-53e7-a755-ea62368951e5",
+      "name": "Alert the operator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3120,
+        180
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Meta verification (GET)": {
+      "main": [
+        [
+          {
+            "node": "Verify token matches?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify token matches?": {
+      "main": [
+        [
+          {
+            "node": "Return challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta leadgen (POST)": {
+      "main": [
+        [
+          {
+            "node": "Raw body as text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raw body as text": {
+      "main": [
+        [
+          {
+            "node": "Compute signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Extract leadgen events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject (bad signature)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject (bad signature)": {
+      "main": [
+        [
+          {
+            "node": "Alert: bad signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract leadgen events": {
+      "main": [
+        [
+          {
+            "node": "Save events to inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save events to inbox": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Meta": {
+      "main": [
+        [
+          {
+            "node": "One item per new event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per new event": {
+      "main": [
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over events": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Current event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current event": {
+      "main": [
+        [
+          {
+            "node": "Process lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process lead": {
+      "main": [
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule retry": {
+      "main": [
+        [
+          {
+            "node": "Alert needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert needed?": {
+      "main": [
+        [
+          {
+            "node": "Alert the operator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert the operator": {
+      "main": [
+        [
+          {
+            "node": "Loop over events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

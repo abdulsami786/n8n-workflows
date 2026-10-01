@@ -1,0 +1,284 @@
+{
+  "id": "lo90MockApis0000",
+  "name": "LeadOps 90 · Mock providers (local testing)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Mock providers (local testing only)\nStands in for the outside services so the whole flow runs on this machine. Never publish in production.\n\nEvery \"sent\" Telegram message, CRM call and Graph lookup shows up in this workflow's **Executions**.\n\n.env for mock mode:\nTELEGRAM_BOT_TOKEN=mock\nTELEGRAM_API_BASE=http://localhost:5678/webhook/mock-telegram\nMETA_GRAPH_BASE=http://localhost:5678/webhook/mock-graph\nCRM_PROVIDER=bigin\nZOHO_ACCOUNTS_URL=http://localhost:5678/webhook/mock-zoho\nBIGIN_API_BASE=http://localhost:5678/webhook/mock-bigin",
+        "width": 380,
+        "height": 420,
+        "color": 7
+      },
+      "id": "8cfceea1-b204-415a-be82-337ede6845e7",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mock-telegram/botmock/sendMessage",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "0e16bba2-e68f-4a2b-8adf-a29d2efb18ed",
+      "name": "Telegram sendMessage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "e8da7986-ffb7-4527-9ab3-9085b01ddcc1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stands in for Telegram's sendMessage. The message itself is in this execution's input.\nconst b = $json.body || {};\nreturn [{ json: { ok: true, result: { message_id: Date.now() % 1e9, date: Math.floor(Date.now() / 1000), chat: { id: b.chat_id }, text: b.text } } }];"
+      },
+      "id": "f0ef0dd4-a985-49db-807e-73dfd09693e5",
+      "name": "Reply like Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": ":version/:id",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "f0fe02fb-8984-4c95-a04f-32df47639a43",
+      "name": "Graph API lead or form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "mock-graph"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stands in for GET graph.facebook.com/{version}/{lead id or form id}.\n// Lead details are derived from the id, so the same lead id always returns the same family.\nconst id = String($json.params.id || '');\nconst fields = String($json.query.fields || '');\nif (!fields.includes('field_data')) {   // form lookup: fields=name,locale\n  const ar = id.endsWith('2');\n  return [{ json: { id, name: ar ? 'نموذج التسجيل 2026' : 'Admissions enquiry 2026', locale: ar ? 'ar_AR' : 'en_US' } }];\n}\nlet seed = (Number(id.slice(-9)) || 0) % 2147483646 + 1;\nconst rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;\nconst pick = (a) => a[Math.floor(rnd() * a.length)];\nconst ar = rnd() < 0.5;\nconst name = ar\n  ? pick(['ليلى', 'أحمد', 'فاطمة', 'خالد', 'مريم', 'يوسف']) + ' ' + pick(['العامري', 'الحمادي', 'المنصوري', 'الشامسي'])\n  : pick(['Sarah', 'James', 'Priya', 'Omar', 'Emma', 'Daniel']) + ' ' + pick(['Khan', 'Smith', 'Fernandes', 'Haddad', 'Wilson']);\nconst [campaign, adset, ad] = pick([\n  ['Admissions 2026 - Arabic', 'Parents Abu Dhabi 25-45', 'Video - principal welcome'],\n  ['Admissions 2026 - English', 'Expat parents Dubai', 'Carousel - campus tour'],\n  ['Open day October', 'Lookalike enquirers', 'Image - open day'],\n]);\nreturn [{ json: {\n  id,\n  created_time: new Date().toISOString().replace(/\\.\\d+Z$/, '+0000'),\n  field_data: [\n    { name: 'full_name', values: [name] },\n    { name: 'phone_number', values: ['+97150' + String(Math.floor(rnd() * 1e7)).padStart(7, '0')] },\n    { name: 'email', values: ['parent' + id.slice(-6) + '@example.com'] },\n    { name: 'which_grade_is_your_child_applying_for?', values: [pick(['FS1', 'FS2', 'Year 1', 'Year 3', 'Year 7'])] },\n  ],\n  form_id: ar ? '200000000000002' : '200000000000001',\n  ad_id: '300000000000003', ad_name: ad, adset_id: '310000000000001', adset_name: adset,\n  campaign_id: '320000000000001', campaign_name: campaign,\n  is_organic: false, platform: pick(['fb', 'ig']),\n} }];"
+      },
+      "id": "5c33db3c-a7f4-4dfc-aa3f-a4033278ba4f",
+      "name": "Reply like Graph API",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mock-zoho/oauth/v2/token",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "e1b5aeb4-be3b-41dc-8776-9d4e11dca86d",
+      "name": "Zoho token refresh",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "c2d2814b-c797-4723-b29f-65486d08763e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stands in for Zoho's OAuth refresh endpoint.\nreturn [{ json: { access_token: 'mock-zoho-' + Date.now(), expires_in: 3600, api_domain: 'https://www.zohoapis.com', token_type: 'Bearer' } }];"
+      },
+      "id": "00fd979e-d2c1-43a5-9ee7-c7853759801d",
+      "name": "Reply like Zoho",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "mock-bigin/Contacts/search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "767cdff4-0b2f-47eb-9df6-3bf3d827ea3d",
+      "name": "Bigin search contact",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        600
+      ],
+      "webhookId": "31c60230-544a-4c22-9ed8-749677be0622"
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 204
+        }
+      },
+      "id": "f6c16bc3-4eea-48d5-979f-73a3430818fc",
+      "name": "Not found (204)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mock-bigin/Contacts",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "d7c5dc79-d3af-4131-9078-014ce2be663e",
+      "name": "Bigin create contact",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        800
+      ],
+      "webhookId": "265552cb-694c-46f1-9306-b68fd1a89632"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stands in for Bigin \"create contact\". The id comes from the phone/email, so a family keeps its id.\nconst c = ($json.body && $json.body.data && $json.body.data[0]) || {};\nlet h = 7;\nfor (const ch of String(c.Mobile || c.Email || c.Last_Name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;\nreturn [{ json: { data: [{ code: 'SUCCESS', status: 'success', message: 'record added',\n  details: { id: '6' + String(h).padStart(18, '0'), Created_Time: new Date().toISOString() } }] } }];"
+      },
+      "id": "d01c7cac-bbc3-47ba-a218-a8c223168775",
+      "name": "Reply like Bigin (contact)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Contacts/:id/Notes",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "0a71d466-5896-46a0-8e12-6702b4e18115",
+      "name": "Bigin add note",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1000
+      ],
+      "webhookId": "mock-bigin"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stands in for Bigin \"add note to contact\".\nreturn [{ json: { data: [{ code: 'SUCCESS', status: 'success', message: 'record added',\n  details: { id: '7' + String(Date.now()).padStart(18, '0'), Parent_Id: { id: $json.params.id } } }] } }];"
+      },
+      "id": "e4f18c90-5e44-43cf-9d8d-434829f49cc2",
+      "name": "Reply like Bigin (note)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        1000
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram sendMessage": {
+      "main": [
+        [
+          {
+            "node": "Reply like Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph API lead or form": {
+      "main": [
+        [
+          {
+            "node": "Reply like Graph API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho token refresh": {
+      "main": [
+        [
+          {
+            "node": "Reply like Zoho",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bigin search contact": {
+      "main": [
+        [
+          {
+            "node": "Not found (204)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bigin create contact": {
+      "main": [
+        [
+          {
+            "node": "Reply like Bigin (contact)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bigin add note": {
+      "main": [
+        [
+          {
+            "node": "Reply like Bigin (note)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all"
+  }
+}

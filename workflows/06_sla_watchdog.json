@@ -1,0 +1,161 @@
+{
+  "id": "lo06SlaWatchdog0",
+  "name": "LeadOps 06 · SLA watchdog (reminders and escalation)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## SLA watchdog\nEvery minute: unclaimed inquiries get a reminder every N minutes (per routing rule), and are escalated to the rule's manager once the promised response time has passed.\n\nThe SQL bumps counters in the same statement that selects them (FOR UPDATE SKIP LOCKED), so overlapping runs never double-remind. Successful runs are not saved (keeps the DB small).",
+        "height": 280,
+        "width": 380,
+        "color": 7
+      },
+      "id": "89063e00-a770-582e-9a37-8c3895ad5665",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "5a52b0d9-bfc6-5bb5-8a96-b6b823913bc6",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT inquiry_id, kind, target_agent_id, minutes_open FROM leadops.due_followups();",
+        "options": {}
+      },
+      "id": "5f54ed41-7304-504d-8111-91ad2687be3d",
+      "name": "Find due follow-ups",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "loCredPostgres01",
+          "name": "LeadOps DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "lo05Notify000000",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "inquiry_id": "={{ Number($json.inquiry_id) }}",
+            "kind": "={{ $json.kind }}",
+            "agent_id": "={{ Number($json.target_agent_id || 0) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "inquiry_id",
+              "displayName": "inquiry_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "agent_id",
+              "displayName": "agent_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "688ce6b6-eb9c-5382-94e0-c18b4848ea26",
+      "name": "Send reminders and escalations",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        0
+      ],
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Find due follow-ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find due follow-ups": {
+      "main": [
+        [
+          {
+            "node": "Send reminders and escalations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "lo10Alerts000000",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
